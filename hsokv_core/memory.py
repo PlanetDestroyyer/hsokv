@@ -74,7 +74,7 @@ class KeyValueMemory:
         min_sim = similarities.min().item()
         max_sim = similarities.max().item()
         mean_sim = similarities.mean().item()
-        print(f"[KV] Sim range: min={min_sim:.4f}, max={max_sim:.4f}, mean={mean_sim:.4f}")
+        # print(f"[KV] Sim range: min={min_sim:.4f}, max={max_sim:.4f}, mean={mean_sim:.4f}")
         k = min(top_k, keys.size(0))
         topk = similarities.topk(k, dim=-1)
         outputs = []
