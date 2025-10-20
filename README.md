@@ -198,14 +198,7 @@ Run each command; inspect `results/` and `outputs/` for plots, tables, and check
 2. Keep modifications ASCII-only unless upstream files already use Unicode.
 3. For academic use, cite the project as:
 
-```
-@software{hsokv2025,
-  author  = {Your Name et al.},
-  title   = {H-SOKV: Hierarchical Swarm-KV Research Prototype},
-  year    = {2025},
-  url     = {https://github.com/your-handle/hsokv}
-}
-```
+
 
 ---
 
