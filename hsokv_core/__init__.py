@@ -7,6 +7,7 @@ from .data import (
     RARE_WORD_SPECS,
     SimpleTokenizer,
     generate_dataset,
+    generate_language_model_dataset,
     prepare_dataloaders,
 )
 from .hf_adapter import HFSwarmConfig, HFSwarmTrainer
@@ -39,6 +40,7 @@ __all__ = [
     "RARE_WORD_SPECS",
     "SimpleTokenizer",
     "generate_dataset",
+    "generate_language_model_dataset",
     "prepare_dataloaders",
     "run_distributed_swarm",
     "HFSwarmConfig",

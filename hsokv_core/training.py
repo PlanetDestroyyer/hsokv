@@ -110,9 +110,15 @@ def train_hsokv(
     base_config = dict(config)
     device = torch.device(base_config["device"])
     if label_names is None:
-        label_names = [spec["word"] for spec in RARE_WORD_SPECS]
+        task_type = base_config.get("task_type", "classification")
+        if task_type == "language_model":
+            label_names = list(getattr(tokenizer, "inverse_vocab", []))
+            if not label_names and word_counts:
+                label_names = list(word_counts.keys())
+        else:
+            label_names = [spec["word"] for spec in RARE_WORD_SPECS]
     if num_labels is None:
-        num_labels = len(label_names)
+        num_labels = len(label_names) if label_names else len(RARE_WORD_SPECS)
     word_counts = dict(word_counts or {})
     vocab_size = len(tokenizer.vocab)
 

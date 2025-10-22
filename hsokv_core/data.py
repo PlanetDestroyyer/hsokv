@@ -3,7 +3,7 @@
 import random
 import json
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -302,3 +302,91 @@ def prepare_dataloaders(
         "test_loader": test_loader,
         "retention_loader": retention_loader,
     }
+
+
+def _load_corpus_text(corpus_path: Optional[str]) -> str:
+    if corpus_path and os.path.exists(corpus_path):
+        with open(corpus_path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    fallback_passages = [
+        "Language models estimate the probability of text sequences by conditioning on the tokens that came before.",
+        "Transformers attend over all positions but their quadratic cost motivates memory-augmented replacements.",
+        "Hierarchical swarm optimization explores optimizer choices in parallel while KV memories cache facts.",
+        "We test the architecture on a tiny corpus so that experiments fit inside quick development loops.",
+    ]
+    return "\n".join(fallback_passages)
+
+
+def generate_language_model_dataset(
+    config: Dict[str, object],
+    corpus_path: Optional[str] = None,
+    tokenizer: Optional[SimpleTokenizer] = None,
+) -> Tuple[Dict[str, List[Dict[str, object]]], SimpleTokenizer, Dict[str, int], List[str]]:
+    seq_length = int(config.get("lm_seq_length", config.get("max_seq_length", 96)))
+    stride = int(config.get("lm_stride", max(1, seq_length // 2)))
+    max_sequences = int(config.get("lm_max_sequences", 20000))
+    train_split = float(config.get("lm_train_split", 0.8))
+    val_split = float(config.get("lm_val_split", 0.1))
+    text = _load_corpus_text(corpus_path or config.get("lm_corpus_path"))
+    if not text.strip():
+        raise ValueError("Language modeling corpus is empty. Provide --lm-corpus with non-empty text.")
+    tokenizer = tokenizer or SimpleTokenizer()
+    if len(tokenizer.vocab) <= 2:
+        tokenizer.fit([text])
+    tokens = tokenizer._tokenize(text)
+    if len(tokens) <= seq_length + 1:
+        raise ValueError(
+            f"Corpus too short for seq_length={seq_length}. Provide a longer corpus or reduce --lm-seq-length."
+        )
+    samples: List[Dict[str, object]] = []
+    for start in range(0, len(tokens) - seq_length - 1, max(1, stride)):
+        context_tokens = tokens[start : start + seq_length]
+        target_token = tokens[start + seq_length]
+        story = " ".join(context_tokens)
+        label_id = tokenizer.vocab.get(target_token, tokenizer.unk_token_id)
+        sample = {
+            "story": story,
+            "rare_word": target_token,
+            "definition": f"next token {target_token}",
+            "usage": target_token,
+            "word_id": label_id,
+            "num_examples": 1,
+        }
+        samples.append(sample)
+        if len(samples) >= max_sequences:
+            break
+    if len(samples) < 10:
+        raise ValueError(
+            f"Only generated {len(samples)} language modeling samples. Increase corpus size or adjust stride."
+        )
+    train_end = max(1, int(len(samples) * train_split))
+    val_end = min(len(samples), max(train_end + 1, int(len(samples) * (train_split + val_split))))
+    train_split_samples = samples[:train_end]
+    val_split_samples = samples[train_end:val_end]
+    test_split_samples = samples[val_end:] if val_end < len(samples) else samples[train_end:]
+    if not val_split_samples and train_split_samples:
+        val_split_samples = [train_split_samples.pop()]
+    if not test_split_samples and val_split_samples:
+        test_split_samples = [val_split_samples[-1]]
+    word_counts = Counter(sample["rare_word"] for sample in train_split_samples)
+    for sample in train_split_samples:
+        sample["num_examples"] = word_counts[sample["rare_word"]]
+    retention_size = min(len(test_split_samples), max(1, len(test_split_samples) // 5))
+    retention_samples = list(test_split_samples[:retention_size])
+    dataset = {
+        "train": train_split_samples,
+        "val": val_split_samples,
+        "test": test_split_samples,
+        "retention": retention_samples,
+        "distractor": [],
+    }
+    rng = random.Random(config.get("seed", 42))
+    distractor_count = min(32, max(4, len(train_split_samples) // 10))
+    vocab_tokens = [tok for tok in tokenizer.inverse_vocab if tok not in (tokenizer.pad_token, tokenizer.unk_token)]
+    if vocab_tokens:
+        for _ in range(distractor_count):
+            noise_tokens = [rng.choice(vocab_tokens) for _ in range(seq_length)]
+            dataset["distractor"].append({"story": " ".join(noise_tokens)})
+    label_names = list(tokenizer.inverse_vocab)
+    label_name_counts = {token: word_counts.get(token, 0) for token in label_names}
+    return dataset, tokenizer, label_name_counts, label_names

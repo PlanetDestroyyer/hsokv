@@ -13,6 +13,7 @@ from hsokv_core import (
     compute_convergence_step,
     estimate_model_flops,
     generate_dataset,
+    generate_language_model_dataset,
     in_context_learning,
     latex_table_from_metrics,
     override_config,
@@ -278,6 +279,17 @@ def run_experiment(args: argparse.Namespace) -> None:
         overrides["use_swarm"] = args.use_swarm
     if args.use_kv is not None:
         overrides["use_kv"] = args.use_kv
+    overrides["task_type"] = args.task
+    if args.task == "language_model":
+        if args.lm_seq_length is not None:
+            overrides["lm_seq_length"] = args.lm_seq_length
+            overrides["max_seq_length"] = args.lm_seq_length
+        if args.lm_stride is not None:
+            overrides["lm_stride"] = args.lm_stride
+        if args.lm_max_sequences is not None:
+            overrides["lm_max_sequences"] = args.lm_max_sequences
+        if args.lm_corpus:
+            overrides["lm_corpus_path"] = args.lm_corpus
     if args.benchmark:
         overrides["benchmark"] = args.benchmark.lower()
     if args.allow_download:
@@ -289,6 +301,8 @@ def run_experiment(args: argparse.Namespace) -> None:
     if args.cifar_data_dir:
         overrides["cifar_data_dir"] = args.cifar_data_dir
     config = override_config(CONFIG, overrides)
+    if args.task == "language_model":
+        config["max_seq_length"] = int(config.get("lm_seq_length", config.get("max_seq_length", 96)))
 
     set_seed(config["seed"])
 
@@ -302,17 +316,34 @@ def run_experiment(args: argparse.Namespace) -> None:
     hsokv_summary = None
     hf_trainer: Optional[HFSwarmTrainer] = None
     model: Optional[TransformerWithKV] = None
+    label_names: Optional[List[str]] = None
+
+    pretrained_tokenizer = SimpleTokenizer.from_pretrained(args.load_pretrained) if args.load_pretrained else None
+    if args.task == "language_model":
+        dataset, tokenizer, word_counts, label_names = generate_language_model_dataset(
+            config,
+            corpus_path=args.lm_corpus,
+            tokenizer=pretrained_tokenizer,
+        )
+        if label_names is None or not label_names:
+            label_names = list(tokenizer.inverse_vocab)
+    else:
+        dataset, tokenizer, word_counts = generate_dataset(
+            tokenizer=pretrained_tokenizer,
+            fit_tokenizer=pretrained_tokenizer is None,
+        )
+        label_names = [spec["word"] for spec in RARE_WORD_SPECS]
+
+    num_labels = len(label_names) if label_names else None
 
     if args.load_pretrained:
-        tokenizer = SimpleTokenizer.from_pretrained(args.load_pretrained)
-        dataset, tokenizer, word_counts = generate_dataset(tokenizer=tokenizer, fit_tokenizer=False)
         dataloaders = prepare_dataloaders(dataset, tokenizer, config)
         device = torch.device(config["device"])
         model = TransformerWithKV.from_pretrained(args.load_pretrained, tokenizer, map_location=device)
         one_shot_ids = {
             idx
-            for idx, spec in enumerate(RARE_WORD_SPECS)
-            if word_counts.get(spec["word"], 0) == 1
+            for idx, name in enumerate(label_names or [])
+            if word_counts.get(name, 0) == 1
         }
         test_metrics = evaluate_model(model, dataloaders["test_loader"], device, top_k=5, one_shot_ids=one_shot_ids)
         retention = evaluate_retention(model, dataloaders["retention_loader"], device)
@@ -338,7 +369,6 @@ def run_experiment(args: argparse.Namespace) -> None:
             "flops_estimate": 0.0,
         }
     else:
-        dataset, tokenizer, word_counts = generate_dataset()
         if args.hf_train:
             extras = {k: v for k, v in config.items() if CONFIG.get(k) != v}
             hf_conf = HFSwarmConfig(
@@ -361,11 +391,18 @@ def run_experiment(args: argparse.Namespace) -> None:
             model = hf_trainer.model
             dataloaders = hsokv_summary["dataloaders"]
         else:
-            model, hsokv_summary = train_hsokv(dataset, tokenizer, word_counts, config)
+            model, hsokv_summary = train_hsokv(
+                dataset,
+                tokenizer,
+                word_counts,
+                config,
+                num_labels=len(label_names) if label_names else None,
+                label_names=label_names,
+            )
             dataloaders = hsokv_summary["dataloaders"]
 
-    baseline_standard = train_baseline_standard(dataset, tokenizer, config)
-    baseline_kv = train_baseline_kv(dataset, tokenizer, config)
+    baseline_standard = train_baseline_standard(dataset, tokenizer, config, num_labels=num_labels)
+    baseline_kv = train_baseline_kv(dataset, tokenizer, config, num_labels=num_labels)
     baseline_in_context = in_context_learning(dataset, tokenizer, config)
 
     # FLOP logging for transparency
@@ -566,6 +603,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", type=str, default="train", choices=["train", "test"], help="Run mode")
     parser.add_argument("--iterations", type=int, default=None, help="Meta-iterations for swarm training")
     parser.add_argument("--visualize", action="store_true", help="Generate plots")
+    parser.add_argument(
+        "--task",
+        type=str,
+        choices=["classification", "language_model"],
+        default=CONFIG.get("task_type", "classification"),
+        help="Primary task type ('classification' or 'language_model')",
+    )
     parser.add_argument("--use-swarm", dest="use_swarm", action="store_true", help="Enable swarm optimization")
     parser.add_argument("--no-use-swarm", dest="use_swarm", action="store_false", help="Disable swarm optimization")
     parser.add_argument("--use-kv", dest="use_kv", action="store_true", help="Enable KV integration")
@@ -634,6 +678,30 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Output directory for Hugging Face trainer checkpoints",
+    )
+    parser.add_argument(
+        "--lm-corpus",
+        type=str,
+        default=None,
+        help="Path to plain-text corpus for language modeling task",
+    )
+    parser.add_argument(
+        "--lm-seq-length",
+        type=int,
+        default=None,
+        help="Context length (tokens) for language modeling windows",
+    )
+    parser.add_argument(
+        "--lm-stride",
+        type=int,
+        default=None,
+        help="Sliding window stride when building language modeling samples",
+    )
+    parser.add_argument(
+        "--lm-max-sequences",
+        type=int,
+        default=None,
+        help="Cap on the number of language modeling sequences to generate",
     )
     return parser.parse_args()
 
