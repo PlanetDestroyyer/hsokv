@@ -334,12 +334,40 @@ def generate_language_model_dataset(
     if len(tokenizer.vocab) <= 2:
         tokenizer.fit([text])
     tokens = tokenizer._tokenize(text)
-    if len(tokens) <= seq_length + 1:
+    token_count = len(tokens)
+    if token_count < 4:
         raise ValueError(
-            f"Corpus too short for seq_length={seq_length}. Provide a longer corpus or reduce --lm-seq-length."
+            "Corpus must contain at least four tokens for language modeling. Provide more text."
         )
+    requested_seq_length = seq_length
+    seq_length = min(seq_length, token_count - 2)
+    if seq_length < 2:
+        seq_length = max(2, token_count // 2)
+    if seq_length < 2:
+        raise ValueError(
+            f"Corpus too short (tokens={token_count}) to derive language modeling samples."
+        )
+    if seq_length != requested_seq_length:
+        print(
+            f"[LM] Adjusted seq_length from {requested_seq_length} to {seq_length} based on corpus size ({token_count} tokens)."
+        )
+    min_samples_target = max(1, int(config.get("lm_min_samples", 10)))
     samples: List[Dict[str, object]] = []
-    for start in range(0, len(tokens) - seq_length - 1, max(1, stride)):
+    span = token_count - seq_length - 1
+    if span <= 0:
+        span = 0
+    effective_stride = stride if stride and stride > 0 else max(1, seq_length // 2)
+    if span > 0:
+        effective_stride = min(effective_stride, span)
+        if effective_stride <= 0:
+            effective_stride = 1
+        approx_samples = span // effective_stride + 1
+        if approx_samples < min_samples_target and span >= min_samples_target:
+            effective_stride = max(1, span // max(1, min_samples_target - 1))
+    else:
+        effective_stride = 1
+    max_sequences = max(1, max_sequences)
+    for start in range(0, span + 1, max(1, effective_stride)):
         context_tokens = tokens[start : start + seq_length]
         target_token = tokens[start + seq_length]
         story = " ".join(context_tokens)
@@ -355,9 +383,14 @@ def generate_language_model_dataset(
         samples.append(sample)
         if len(samples) >= max_sequences:
             break
-    if len(samples) < 10:
+    if not samples:
         raise ValueError(
-            f"Only generated {len(samples)} language modeling samples. Increase corpus size or adjust stride."
+            "Failed to build language modeling samples. Provide a longer corpus or reduce --lm-seq-length."
+        )
+    if len(samples) < min_samples_target:
+        print(
+            f"[LM] Generated {len(samples)} samples (requested ≥ {min_samples_target}). "
+            "Consider extending the corpus or reducing --lm-seq-length/--lm-stride for richer training."
         )
     train_end = max(1, int(len(samples) * train_split))
     val_end = min(len(samples), max(train_end + 1, int(len(samples) * (train_split + val_split))))
