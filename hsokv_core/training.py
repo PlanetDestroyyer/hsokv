@@ -1,6 +1,7 @@
 """Training loops and evaluation helpers for H-SOKV."""
 
 from copy import deepcopy
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -156,6 +157,8 @@ def train_hsokv(
         loss_curve = []
         steps_budget = config["_max_training_steps"]
         steps_taken = 0
+        loop_start = time.time()
+        samples_processed = 0
         for _ in range(config["meta_iterations"]):
             for batch in dataloaders["train_loader"]:
                 if steps_taken >= steps_budget:
@@ -169,6 +172,16 @@ def train_hsokv(
                 optimizer.step()
                 loss_curve.append(loss.item())
                 steps_taken += 1
+                batch_size = batch["input_ids"].size(0)
+                samples_processed += batch_size
+                if steps_taken % 10 == 0 or steps_taken == steps_budget:
+                    elapsed = max(time.time() - loop_start, 1e-8)
+                    kv_hit_val = float(info["kv_details"]["avg_similarity"]) if config.get("use_kv", True) else 0.0
+                    samples_per_sec = samples_processed / elapsed
+                    print(
+                        f"[Step {steps_taken}/{steps_budget}] Loss: {loss.item():.3f} | "
+                        f"KV Hit: {kv_hit_val:.2f} | Samples/sec: {samples_per_sec:.1f}"
+                    )
                 if config.get("use_kv", True):
                     with torch.no_grad():
                         for pooled, definition, usage, rare_word in zip(info["pooled"], batch["definitions"], batch["usages"], batch["rare_words"]):
@@ -232,8 +245,20 @@ def train_hsokv(
         kv_state=initial_kv_state,
     )
     logs: List[Dict[str, object]] = []
-    pbar = tqdm(range(config["meta_iterations"]), desc="Meta-iterations")
+    total_iterations = config["meta_iterations"]
+    pbar = tqdm(range(total_iterations), desc="Meta-iterations")
+    iteration_times: List[float] = []
+    reported_cpu_memory = False
     for iteration in pbar:
+        if iteration_times:
+            avg_time = sum(iteration_times) / len(iteration_times)
+        else:
+            approx_steps = config["agent_steps"] * max(1, config["agents_per_manager"] * config["num_managers"])
+            avg_time = max(5.0, approx_steps * 0.03)
+        remaining_iterations = max(0, total_iterations - iteration)
+        eta_minutes = max(0.0, remaining_iterations * avg_time / 60.0)
+        pbar.write(f"[Iteration {iteration + 1}/{total_iterations}] ETA: {eta_minutes:.0f} minutes")
+        iteration_start = time.time()
         iteration_log = supervisor.run_meta_iteration(
             {
                 "train_loader": dataloaders["train_loader"],
@@ -246,6 +271,17 @@ def train_hsokv(
             },
             iteration,
         )
+        iteration_duration = time.time() - iteration_start
+        iteration_times.append(iteration_duration)
+        if torch.cuda.is_available():
+            device_index = torch.cuda.current_device()
+            used_gb = torch.cuda.memory_allocated(device_index) / 1e9
+            total_gb = torch.cuda.get_device_properties(device_index).total_memory / 1e9
+            percent_used = (used_gb / total_gb * 100.0) if total_gb else 0.0
+            pbar.write(f"[GPU Memory] Used: {used_gb:.1f}GB / {total_gb:.1f}GB ({percent_used:.0f}%)")
+        elif not reported_cpu_memory:
+            pbar.write("[GPU Memory] GPU not available - running on CPU.")
+            reported_cpu_memory = True
         logs.append(iteration_log)
         best_metrics = iteration_log["best"]
         pbar.set_postfix(
@@ -325,6 +361,8 @@ def train_baseline_standard(
     loss_curve: List[float] = []
     accuracy_curve: List[float] = []
     steps_taken = 0
+    loop_start = time.time()
+    samples_processed = 0
     while steps_taken < max_steps:
         model.train()
         for batch in dataloaders["train_loader"]:
@@ -338,6 +376,15 @@ def train_baseline_standard(
             optimizer.step()
             loss_curve.append(loss.item())
             steps_taken += 1
+            batch_size = batch["input_ids"].size(0)
+            samples_processed += batch_size
+            if steps_taken % 10 == 0 or steps_taken == max_steps:
+                elapsed = max(time.time() - loop_start, 1e-8)
+                samples_per_sec = samples_processed / elapsed
+                print(
+                    f"[Step {steps_taken}/{max_steps}] Loss: {loss.item():.3f} | KV Hit: 0.00 | "
+                    f"Samples/sec: {samples_per_sec:.1f}"
+                )
         metrics = evaluate_baseline_model(model, dataloaders["val_loader"], device)
         accuracy_curve.append(metrics["accuracy"])
     test_metrics = evaluate_baseline_model(model, dataloaders["test_loader"], device)
@@ -384,6 +431,8 @@ def train_baseline_kv(
     criterion = nn.CrossEntropyLoss()
     loss_curve = []
     steps_taken = 0
+    loop_start = time.time()
+    samples_processed = 0
     for _ in range(config["baseline_kv_steps"]):
         for batch in dataloaders["train_loader"]:
             if steps_taken >= max_steps:
@@ -396,6 +445,16 @@ def train_baseline_kv(
             optimizer.step()
             loss_curve.append(loss.item())
             steps_taken += 1
+            batch_size = batch["input_ids"].size(0)
+            samples_processed += batch_size
+            if steps_taken % 10 == 0 or steps_taken == max_steps:
+                elapsed = max(time.time() - loop_start, 1e-8)
+                samples_per_sec = samples_processed / elapsed
+                kv_hit_val = float(info["kv_details"]["avg_similarity"])
+                print(
+                    f"[Step {steps_taken}/{max_steps}] Loss: {loss.item():.3f} | KV Hit: {kv_hit_val:.2f} | "
+                    f"Samples/sec: {samples_per_sec:.1f}"
+                )
             with torch.no_grad():
                 seen_in_batch = set()
                 for pooled, definition, usage, rare_word in zip(info["pooled"], batch["definitions"], batch["usages"], batch["rare_words"]):

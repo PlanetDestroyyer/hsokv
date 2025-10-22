@@ -8,11 +8,13 @@ import torch
 
 from hsokv_core import (
     CONFIG,
+    PRESET_CONFIGS,
     RARE_WORD_SPECS,
     SimpleTokenizer,
     compute_convergence_step,
     estimate_model_flops,
     generate_dataset,
+    generate_default_corpus,
     generate_language_model_dataset,
     in_context_learning,
     latex_table_from_metrics,
@@ -34,6 +36,18 @@ from hsokv_core.benchmarks import BenchmarkResult
 from hsokv_core.training import evaluate_model, evaluate_retention
 from hsokv_core.metrics import summarize_history
 
+PRESET_RUNTIME_HINTS: Dict[str, str] = {
+    "quick_test": "2-3 min expected runtime",
+    "demo": "15-20 min expected runtime",
+    "research": "30-40 min expected runtime",
+}
+
+CORPUS_SAMPLE_HINTS: Dict[str, str] = {
+    "tiny": "10 samples",
+    "small": "100 samples",
+    "medium": "500 samples",
+    "large": "2000 samples",
+}
 
 def format_results_table(results: Dict[str, Dict[str, float]]) -> str:
     lines = [
@@ -271,7 +285,45 @@ def log_flops_estimate(model: torch.nn.Module, config: Dict[str, object]) -> flo
     return est_flops
 
 
+def _format_corpus_descriptor(config: Dict[str, object], args: argparse.Namespace) -> str:
+    if args.task != "language_model":
+        return "Corpus: Synthetic rare-word classification dataset"
+    if args.lm_corpus:
+        return f"Corpus: Using provided file '{os.path.basename(args.lm_corpus)}'"
+    preset = config.get("lm_corpus_preset", "medium")
+    hint = CORPUS_SAMPLE_HINTS.get(preset, "")
+    descriptor = f"Auto-generating {preset} size"
+    if hint:
+        descriptor += f" ({hint})"
+    return f"Corpus: {descriptor}"
+
+
+def print_configuration_banner(preset: str, config: Dict[str, object], args: argparse.Namespace) -> None:
+    runtime_hint = PRESET_RUNTIME_HINTS.get(preset, "custom runtime")
+    if torch.cuda.is_available():
+        props = torch.cuda.get_device_properties(0)
+        total_gb = props.total_memory / 1e9
+        gpu_line = f"GPU: {props.name} ({total_gb:.1f}GB) - sufficient for this config"
+    else:
+        gpu_line = "GPU: Not detected - running on CPU (expect slower runs)"
+    corpus_line = _format_corpus_descriptor(config, args)
+    print("=" * 60)
+    print(f"Config: {preset} preset ({runtime_hint})")
+    print(gpu_line)
+    print(corpus_line)
+    print("=" * 60)
+
+
 def run_experiment(args: argparse.Namespace) -> None:
+    preset_name = args.preset or CONFIG.get("preset", "demo")
+    if preset_name not in PRESET_CONFIGS:
+        print(f"[WARN] Unknown preset '{preset_name}', falling back to 'demo'.")
+        preset_name = "demo"
+    base_config = override_config(CONFIG, {"preset": preset_name})
+    base_config = override_config(base_config, PRESET_CONFIGS.get(preset_name, {}))
+    corpus_preset = args.corpus_size or base_config.get("lm_corpus_preset", "medium")
+    base_config = override_config(base_config, {"lm_corpus_preset": corpus_preset})
+
     overrides = {}
     if args.iterations is not None:
         overrides["meta_iterations"] = args.iterations
@@ -290,6 +342,8 @@ def run_experiment(args: argparse.Namespace) -> None:
             overrides["lm_max_sequences"] = args.lm_max_sequences
         if args.lm_corpus:
             overrides["lm_corpus_path"] = args.lm_corpus
+        if args.corpus_size:
+            overrides["lm_corpus_preset"] = args.corpus_size
     if args.benchmark:
         overrides["benchmark"] = args.benchmark.lower()
     if args.allow_download:
@@ -300,11 +354,12 @@ def run_experiment(args: argparse.Namespace) -> None:
         overrides["glue_data_dir"] = args.glue_data_dir
     if args.cifar_data_dir:
         overrides["cifar_data_dir"] = args.cifar_data_dir
-    config = override_config(CONFIG, overrides)
+    config = override_config(base_config, overrides)
     if args.task == "language_model":
         config["max_seq_length"] = int(config.get("lm_seq_length", config.get("max_seq_length", 96)))
 
     set_seed(config["seed"])
+    print_configuration_banner(preset_name, config, args)
 
     if args.load_pretrained and args.hf_train:
         raise ValueError("--load-pretrained and --hf-train cannot be used together.")
@@ -317,13 +372,15 @@ def run_experiment(args: argparse.Namespace) -> None:
     hf_trainer: Optional[HFSwarmTrainer] = None
     model: Optional[TransformerWithKV] = None
     label_names: Optional[List[str]] = None
+    corpus_text: str = ""
 
     pretrained_tokenizer = SimpleTokenizer.from_pretrained(args.load_pretrained) if args.load_pretrained else None
     if args.task == "language_model":
-        dataset, tokenizer, word_counts, label_names = generate_language_model_dataset(
+        dataset, tokenizer, word_counts, label_names, corpus_text = generate_language_model_dataset(
             config,
             corpus_path=args.lm_corpus,
             tokenizer=pretrained_tokenizer,
+            corpus_size=config.get("lm_corpus_preset", "medium"),
         )
         if label_names is None or not label_names:
             label_names = list(tokenizer.inverse_vocab)
@@ -333,8 +390,36 @@ def run_experiment(args: argparse.Namespace) -> None:
             fit_tokenizer=pretrained_tokenizer is None,
         )
         label_names = [spec["word"] for spec in RARE_WORD_SPECS]
+        corpus_text = ""
+
+    if args.task == "language_model":
+        corpus_token_count = len(tokenizer._tokenize(corpus_text)) if corpus_text else 0
+        if corpus_token_count < 200:
+            print("[WARNING] Corpus too small. Switching to auto-generated corpus.")
+            dataset, tokenizer, word_counts, label_names, corpus_text = generate_language_model_dataset(
+                config,
+                corpus_path=None,
+                tokenizer=tokenizer,
+                corpus_size=config.get("lm_corpus_preset", "medium"),
+            )
+        elif corpus_token_count < 1000:
+            print("[WARN] Limited corpus. Consider providing larger corpus for better training.")
 
     num_labels = len(label_names) if label_names else None
+
+    if torch.cuda.is_available():
+        device_index = torch.cuda.current_device()
+        total_memory_gb = torch.cuda.get_device_properties(device_index).total_memory / 1e9
+        estimated_gb = (
+            config.get("batch_size", 8)
+            * 3
+            * config.get("d_model", 256)
+            * config.get("max_seq_length", 96)
+        ) / 1e9
+        if estimated_gb > total_memory_gb * 0.8:
+            print(
+                f"[WARN] Insufficient GPU memory. Reduce --batch-size (estimate {estimated_gb:.1f}GB vs {total_memory_gb:.1f}GB available)."
+            )
 
     if args.load_pretrained:
         dataloaders = prepare_dataloaders(dataset, tokenizer, config)
@@ -528,6 +613,51 @@ def run_validation_tests() -> None:
     set_seed(CONFIG["seed"])
     device = torch.device(CONFIG["device"])
 
+    def test_corpus_generation_defaults():
+        lm_config = override_config(
+            CONFIG,
+            {
+                "device": "cpu",
+                "lm_seq_length": 32,
+                "lm_stride": 0,
+                "lm_max_sequences": 200,
+                "lm_corpus_preset": "small",
+            },
+        )
+        dataset, lm_tokenizer, counts, labels, corpus_text = generate_language_model_dataset(
+            lm_config,
+            corpus_path=None,
+            tokenizer=None,
+            corpus_size="small",
+        )
+        total_samples = len(dataset["train"]) + len(dataset["val"]) + len(dataset["test"])
+        assert total_samples >= lm_config.get("lm_min_samples", 50)
+        assert len(generate_default_corpus("tiny")) > 0
+        assert len(lm_tokenizer._tokenize(corpus_text)) >= 500
+
+    def test_preset_application():
+        quick = override_config(CONFIG, PRESET_CONFIGS["quick_test"])
+        assert quick["meta_iterations"] == 2
+        assert quick["agents_per_manager"] == 1
+        assert quick["lm_seq_length"] == 32
+
+    def test_quick_preset_training():
+        quick_conf = override_config(CONFIG, PRESET_CONFIGS["quick_test"])
+        quick_conf = override_config(
+            quick_conf,
+            {
+                "device": "cpu",
+                "meta_iterations": 1,
+                "agent_steps": 1,
+                "agents_per_manager": 1,
+                "num_managers": 1,
+                "flops_target": 5e6,
+            },
+        )
+        dataset, tokenizer, counts = generate_dataset()
+        _model, summary = train_hsokv(dataset, tokenizer, counts, quick_conf)
+        assert summary["history"]
+
     def test_kv_normalized_hits():
         tokenizer = SimpleTokenizer()
         tokenizer.fit(["a b c"])
@@ -589,6 +719,9 @@ def run_validation_tests() -> None:
         assert metrics["nodes"] == [1]
         assert metrics["speedup"][0] >= 1.0
 
+    test_corpus_generation_defaults()
+    test_preset_application()
+    test_quick_preset_training()
     test_kv_normalized_hits()
     test_swarm_only_flag()
     test_use_kv_flag()
@@ -603,6 +736,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", type=str, default="train", choices=["train", "test"], help="Run mode")
     parser.add_argument("--iterations", type=int, default=None, help="Meta-iterations for swarm training")
     parser.add_argument("--visualize", action="store_true", help="Generate plots")
+    parser.add_argument(
+        "--preset",
+        type=str,
+        choices=list(PRESET_CONFIGS.keys()),
+        default=CONFIG.get("preset", "demo"),
+        help="Use predefined config preset (quick_test=2min, demo=15min, research=30min)",
+    )
     parser.add_argument(
         "--task",
         type=str,
@@ -702,6 +842,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Cap on the number of language modeling sequences to generate",
+    )
+    parser.add_argument(
+        "--corpus-size",
+        type=str,
+        choices=["tiny", "small", "medium", "large"],
+        default=CONFIG.get("lm_corpus_preset", "medium"),
+        help="Auto-generate corpus of specified size if --lm-corpus not provided",
     )
     return parser.parse_args()
 

@@ -2,11 +2,12 @@
 
 from .ablations import run_ablation_suite, variant_flags
 from .benchmarks import run_glue_benchmark, run_split_cifar_benchmark
-from .config import CONFIG, override_config, relevant_ablation_variants
+from .config import CONFIG, PRESET_CONFIGS, override_config, relevant_ablation_variants
 from .data import (
     RARE_WORD_SPECS,
     SimpleTokenizer,
     generate_dataset,
+    generate_default_corpus,
     generate_language_model_dataset,
     prepare_dataloaders,
 )
@@ -31,6 +32,7 @@ from .utils import move_batch_to_device, set_seed
 
 __all__ = [
     "CONFIG",
+    "PRESET_CONFIGS",
     "run_ablation_suite",
     "variant_flags",
     "run_glue_benchmark",
@@ -40,6 +42,7 @@ __all__ = [
     "RARE_WORD_SPECS",
     "SimpleTokenizer",
     "generate_dataset",
+    "generate_default_corpus",
     "generate_language_model_dataset",
     "prepare_dataloaders",
     "run_distributed_swarm",

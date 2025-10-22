@@ -11,6 +11,110 @@ from torch.utils.data import DataLoader, Dataset
 
 from .config import CONFIG
 
+DEFAULT_CORPUS_CACHE: Dict[str, str] = {}
+
+_CORPUS_SIZE_BYTES: Dict[str, int] = {
+    "tiny": 1 * 1024,
+    "small": 10 * 1024,
+    "medium": 50 * 1024,
+    "large": 200 * 1024,
+}
+
+_BASE_CORPUS_SENTENCES: List[str] = [
+    "Neural networks thrive on gradient descent across vast parameter landscapes.",
+    "Transformer attention maps contextual relationships between every token pair.",
+    "Curriculum learning schedules gradually introduce complex reasoning tasks.",
+    "Self supervised pretraining unlocks semantic structure without manual labels.",
+    "Vision transformers reinterpret patches as tokens within global receptive fields.",
+    "Large language models internalize code syntax alongside natural language cues.",
+    "Reinforcement learning with human feedback aligns models to user preferences.",
+    "Sparse mixture of experts routing reduces compute per token for large models.",
+    "Quantization aware training preserves accuracy while shrinking deployment costs.",
+    "Diffusion models iteratively denoise latent variables to synthesize rich images.",
+    "Currying prompts with chain of thought reasoning boosts factual consistency.",
+    "Low rank adapters enable rapid fine tuning on edge constrained hardware.",
+    "Prompt caching reuses embeddings to accelerate high throughput inference.",
+    "Beam search balances exploration and exploitation in generative decoding.",
+    "Contrastive objectives teach encoders to separate positive and negative pairs.",
+    "Federated learning aggregates gradients without centralizing private data.",
+    "Distributed data parallelism overlaps communication and computation efficiently.",
+    "Checkpoints track optimizer state for resilient long horizon experiments.",
+    "Gradient checkpointing trades recomputation for reduced activation memory.",
+    "Token level perplexity reveals where models struggle to predict context.",
+    "Retrieval augmented generation grounds responses with external knowledge.",
+    "Adapter fusion blends specialized experts for multi domain generalization.",
+    "Meta learning loops warm start new tasks with only a handful of examples.",
+    "Curriculum distillation compresses ensembles into nimble student models.",
+    "Graph neural networks propagate messages along dynamically learned edges.",
+    "Hyperparameter sweeps explore learning rate, weight decay, and schedule space.",
+    "Synthetic data bootstraps rare scenarios when real examples are scarce.",
+    "Guardrails moderate outputs to respect safety, legality, and user intent.",
+    "Latency aware schedulers co locate workloads to maximize GPU utilization.",
+    "Token streaming lets applications start rendering text before completion.",
+    "Batching prompts amortizes kernel launches and maximizes throughput.",
+    "Long context memorization relies on rotary position encodings and chunking.",
+    "Gradient noise scale informs when to raise or lower the learning rate.",
+    "Observability dashboards surface training anomalies before failure cascades.",
+    "Active learning queries the most informative samples for manual annotation.",
+    "Monte Carlo dropout offers calibrated uncertainty at inference time.",
+    "Knowledge distillation transfers dark knowledge between teacher and student.",
+    "Parameter efficient fine tuning keeps the frozen backbone intact.",
+    "Structured pruning removes redundant attention heads without accuracy loss.",
+    "Tokenizer choice dictates how morphemes and punctuation map to subwords.",
+    "Mixed precision training leverages tensor cores for faster matmul kernels.",
+    "Gradient accumulation simulates large batches on constrained accelerators.",
+    "Zero redundancy optimization shards optimizer states across workers.",
+    "Dynamic loss scaling prevents underflow in half precision arithmetic.",
+    "Reversible layers roll back activations to shrink memory requirements.",
+    "Automated data validation catches schema drift in production pipelines.",
+    "Trusted execution enclaves shield sensitive prompts during inference.",
+    "Semantic caching replays prior answers when queries share embeddings.",
+    "Auto regression decomposes joint probabilities into conditional factors.",
+    "Curriculum sampling reweights datasets toward underrepresented skills.",
+    "Unit tests for prompts keep regressions from slipping into deployments.",
+    "Benchmarks like MMLU and HELM profile broad capabilities systematically.",
+    "Tokenizer detokenization parity avoids reconstruction glitches downstream.",
+    "Adaptive computation time halts layers early once predictions stabilize.",
+    "Checkpoint averaging smooths stochastic weight trajectories before eval.",
+    "Elastic compute frameworks resize clusters automatically to meet demand.",
+    "Prompt engineering mixes instructions, few shot exemplars, and rulesets.",
+    "Safety classifiers filter disallowed generations prior to user delivery.",
+    "Causal masking enforces autoregressive factorization during decoding.",
+    "Monte Carlo tree search guides decision making in complex planning games.",
+    "Contrastive search blends beam heuristics with mutual information gains.",
+    "Curriculum regularization prevents catastrophic forgetting in continual learning.",
+]
+
+
+def generate_default_corpus(size: str = "medium") -> str:
+    """Generate a reusable language-modeling corpus grounded in ML/AI topics.
+
+    Text is generated deterministically from a curated bank of diverse sentences
+    and cached per size preset to avoid recomputation across runs.
+    """
+
+    if not size:
+        size = "medium"
+    preset = size.lower()
+    if preset not in _CORPUS_SIZE_BYTES:
+        preset = "medium"
+    if preset in DEFAULT_CORPUS_CACHE:
+        return DEFAULT_CORPUS_CACHE[preset]
+
+    target_bytes = _CORPUS_SIZE_BYTES[preset]
+    buffer: List[str] = []
+    sentence_count = len(_BASE_CORPUS_SENTENCES)
+    idx = 0
+    # Cycle deterministically through base sentences until the byte budget is met.
+    while True:
+        buffer.append(_BASE_CORPUS_SENTENCES[idx % sentence_count])
+        idx += 1
+        if len("\n".join(buffer).encode("utf-8")) >= target_bytes:
+            break
+    corpus = "\n".join(buffer)
+    DEFAULT_CORPUS_CACHE[preset] = corpus
+    return corpus
+
 
 class SimpleTokenizer:
     def __init__(self) -> None:
@@ -321,68 +425,91 @@ def generate_language_model_dataset(
     config: Dict[str, object],
     corpus_path: Optional[str] = None,
     tokenizer: Optional[SimpleTokenizer] = None,
-) -> Tuple[Dict[str, List[Dict[str, object]]], SimpleTokenizer, Dict[str, int], List[str]]:
+    corpus_size: str = "medium",
+) -> Tuple[Dict[str, List[Dict[str, object]]], SimpleTokenizer, Dict[str, int], List[str], str]:
+    """Create a language-modeling dataset by slicing a corpus into contexts.
+
+    Falls back to auto-generated corpora when the provided text is too small
+    and guarantees a reasonable number of training windows where possible.
+    """
+
     seq_length = int(config.get("lm_seq_length", config.get("max_seq_length", 96)))
-    stride = int(config.get("lm_stride", max(1, seq_length // 2)))
+    stride_config = config.get("lm_stride")
+    stride = int(stride_config) if stride_config else max(1, seq_length // 4)
     max_sequences = int(config.get("lm_max_sequences", 20000))
     train_split = float(config.get("lm_train_split", 0.8))
     val_split = float(config.get("lm_val_split", 0.1))
-    text = _load_corpus_text(corpus_path or config.get("lm_corpus_path"))
-    if not text.strip():
-        raise ValueError("Language modeling corpus is empty. Provide --lm-corpus with non-empty text.")
-    tokenizer = tokenizer or SimpleTokenizer()
-    if len(tokenizer.vocab) <= 2:
-        tokenizer.fit([text])
-    tokens = tokenizer._tokenize(text)
+    min_samples_target = max(50, int(config.get("lm_min_samples", 50)))
+
+    raw_text = _load_corpus_text(corpus_path or config.get("lm_corpus_path"))
+    corpus_text = raw_text if raw_text and raw_text.strip() else ""
+    user_tokenizer = tokenizer
+    tokenizer = user_tokenizer or SimpleTokenizer()
+    should_fit = user_tokenizer is None or len(tokenizer.vocab) <= 2
+
+    if not corpus_text:
+        corpus_text = generate_default_corpus(corpus_size)
+    tokens = tokenizer._tokenize(corpus_text)
     token_count = len(tokens)
+    if token_count < 500:
+        print(f"[LM] Corpus size {token_count} tokens. Using preset corpus for better training.")
+        corpus_text = generate_default_corpus(corpus_size)
+        tokens = tokenizer._tokenize(corpus_text)
+        token_count = len(tokens)
+        if user_tokenizer is None:
+            should_fit = True
+
+    if should_fit:
+        tokenizer.fit([corpus_text])
+        tokens = tokenizer._tokenize(corpus_text)
+        token_count = len(tokens)
+
     if token_count < 4:
-        raise ValueError(
-            "Corpus must contain at least four tokens for language modeling. Provide more text."
-        )
+        raise ValueError("Corpus must contain at least four tokens. Provide more text or adjust presets.")
+
     requested_seq_length = seq_length
     seq_length = min(seq_length, token_count - 2)
     if seq_length < 2:
         seq_length = max(2, token_count // 2)
     if seq_length < 2:
-        raise ValueError(
-            f"Corpus too short (tokens={token_count}) to derive language modeling samples."
-        )
+        raise ValueError(f"Corpus too short (tokens={token_count}) to derive language modeling samples.")
     if seq_length != requested_seq_length:
         print(
             f"[LM] Adjusted seq_length from {requested_seq_length} to {seq_length} based on corpus size ({token_count} tokens)."
         )
-    min_samples_target = max(1, int(config.get("lm_min_samples", 10)))
-    samples: List[Dict[str, object]] = []
+
     span = token_count - seq_length - 1
     if span <= 0:
         span = 0
-    effective_stride = stride if stride and stride > 0 else max(1, seq_length // 2)
+    effective_stride = max(1, stride)
     if span > 0:
         effective_stride = min(effective_stride, span)
-        if effective_stride <= 0:
-            effective_stride = 1
         approx_samples = span // effective_stride + 1
         if approx_samples < min_samples_target and span >= min_samples_target:
             effective_stride = max(1, span // max(1, min_samples_target - 1))
     else:
         effective_stride = 1
+
+    samples: List[Dict[str, object]] = []
     max_sequences = max(1, max_sequences)
-    for start in range(0, span + 1, max(1, effective_stride)):
+    for start in range(0, span + 1, effective_stride):
         context_tokens = tokens[start : start + seq_length]
         target_token = tokens[start + seq_length]
         story = " ".join(context_tokens)
         label_id = tokenizer.vocab.get(target_token, tokenizer.unk_token_id)
-        sample = {
-            "story": story,
-            "rare_word": target_token,
-            "definition": f"next token {target_token}",
-            "usage": target_token,
-            "word_id": label_id,
-            "num_examples": 1,
-        }
-        samples.append(sample)
+        samples.append(
+            {
+                "story": story,
+                "rare_word": target_token,
+                "definition": f"next token {target_token}",
+                "usage": target_token,
+                "word_id": label_id,
+                "num_examples": 1,
+            }
+        )
         if len(samples) >= max_sequences:
             break
+
     if not samples:
         raise ValueError(
             "Failed to build language modeling samples. Provide a longer corpus or reduce --lm-seq-length."
@@ -392,6 +519,7 @@ def generate_language_model_dataset(
             f"[LM] Generated {len(samples)} samples (requested ≥ {min_samples_target}). "
             "Consider extending the corpus or reducing --lm-seq-length/--lm-stride for richer training."
         )
+
     train_end = max(1, int(len(samples) * train_split))
     val_end = min(len(samples), max(train_end + 1, int(len(samples) * (train_split + val_split))))
     train_split_samples = samples[:train_end]
@@ -401,9 +529,11 @@ def generate_language_model_dataset(
         val_split_samples = [train_split_samples.pop()]
     if not test_split_samples and val_split_samples:
         test_split_samples = [val_split_samples[-1]]
+
     word_counts = Counter(sample["rare_word"] for sample in train_split_samples)
     for sample in train_split_samples:
         sample["num_examples"] = word_counts[sample["rare_word"]]
+
     retention_size = min(len(test_split_samples), max(1, len(test_split_samples) // 5))
     retention_samples = list(test_split_samples[:retention_size])
     dataset = {
@@ -413,6 +543,7 @@ def generate_language_model_dataset(
         "retention": retention_samples,
         "distractor": [],
     }
+
     rng = random.Random(config.get("seed", 42))
     distractor_count = min(32, max(4, len(train_split_samples) // 10))
     vocab_tokens = [tok for tok in tokenizer.inverse_vocab if tok not in (tokenizer.pad_token, tokenizer.unk_token)]
@@ -420,6 +551,7 @@ def generate_language_model_dataset(
         for _ in range(distractor_count):
             noise_tokens = [rng.choice(vocab_tokens) for _ in range(seq_length)]
             dataset["distractor"].append({"story": " ".join(noise_tokens)})
+
     label_names = list(tokenizer.inverse_vocab)
     label_name_counts = {token: word_counts.get(token, 0) for token in label_names}
-    return dataset, tokenizer, label_name_counts, label_names
+    return dataset, tokenizer, label_name_counts, label_names, corpus_text

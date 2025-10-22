@@ -52,6 +52,34 @@ python hsokv.py --mode test
 
 ---
 
+## Quick Start
+
+### 1. Fast Test (2 minutes)
+
+```bash
+python hsokv.py --preset quick_test --visualize
+```
+
+### 2. Demo Run (15 minutes) - RECOMMENDED
+
+```bash
+python hsokv.py --preset demo --task language_model --visualize
+```
+
+### 3. Full Research (30+ minutes)
+
+```bash
+python hsokv.py --preset research --visualize
+```
+
+### Custom Corpus
+
+```bash
+python hsokv.py --task language_model --lm-corpus your_corpus.txt --visualize
+```
+
+---
+
 ## 3. Running Experiments
 
 ### 3.1 Synthetic Rare-Word Task

@@ -70,7 +70,8 @@ class Agent:
         gate_entropy_curve: List[float] = []
         gate_mean_curve: List[float] = []
         start_time = time.time()
-        for _ in range(self.steps):
+        samples_processed = 0
+        for step_idx in range(self.steps):
             batch = next(iterator)
             batch = move_batch_to_device(batch, self.device)
             model.train()
@@ -95,6 +96,17 @@ class Agent:
             loss_curve.append(loss.item())
             kv_hits.append(info["kv_details"]["avg_similarity"])
             usage_curve.append(compute_usage_correctness(logits.argmax(dim=-1), batch["labels"], info["gate_values"]))
+            batch_size = batch["input_ids"].size(0)
+            samples_processed += batch_size
+            current_step = step_idx + 1
+            if current_step % 10 == 0 or current_step == self.steps:
+                elapsed = max(time.time() - start_time, 1e-8)
+                samples_per_sec = samples_processed / elapsed
+                kv_hit_val = float(info["kv_details"]["avg_similarity"])
+                print(
+                    f"[Step {current_step}/{self.steps}] Loss: {loss.item():.3f} | "
+                    f"KV Hit: {kv_hit_val:.2f} | Samples/sec: {samples_per_sec:.1f}"
+                )
             if self.config.get("use_kv", True):
                 self._update_memory(model, batch, info["pooled"])
             if len(model.kv_memory) > self.config["max_memory_entries"]:

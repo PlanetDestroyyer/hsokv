@@ -73,6 +73,39 @@ CONFIG: Dict[str, object] = {
     "num_nodes": 1,
     "hf_model_name": "hsokv-base",
     "flops_target": 1e9,
+    "preset": "demo",
+    "lm_corpus_preset": "medium",
+    "lm_min_samples": 50,
+}
+
+PRESET_CONFIGS: Dict[str, Dict[str, object]] = {
+    "quick_test": {
+        "meta_iterations": 2,
+        "agents_per_manager": 1,
+        "agent_steps": 10,
+        "batch_size": 16,
+        "num_managers": 1,
+        "lm_seq_length": 32,
+        "lm_stride": 16,
+    },
+    "demo": {
+        "meta_iterations": 5,
+        "agents_per_manager": 2,
+        "agent_steps": 25,
+        "batch_size": 16,
+        "num_managers": 2,
+        "lm_seq_length": 48,
+        "lm_stride": 24,
+    },
+    "research": {
+        "meta_iterations": 10,
+        "agents_per_manager": 5,
+        "agent_steps": 50,
+        "batch_size": 32,
+        "num_managers": 2,
+        "lm_seq_length": 64,
+        "lm_stride": 32,
+    },
 }
 
 
