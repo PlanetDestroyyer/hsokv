@@ -76,6 +76,12 @@ CONFIG: Dict[str, object] = {
     "preset": "demo",
     "lm_corpus_preset": "medium",
     "lm_min_samples": 50,
+    "use_context_retrieval": True,
+    "context_recency_decay": 0.95,
+    "context_domain_boost": 1.5,
+    "context_emotion_scale": 0.3,
+    "context_importance_scale": 0.5,
+    "context_domains": ["general", "medical", "legal", "finance", "technology", "culinary"],
 }
 
 PRESET_CONFIGS: Dict[str, Dict[str, object]] = {

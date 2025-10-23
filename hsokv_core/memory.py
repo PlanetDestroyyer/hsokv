@@ -1,5 +1,6 @@
 """Key-Value memory with normalized embeddings and efficient pruning."""
 
+import logging
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -7,6 +8,8 @@ import torch
 import torch.nn.functional as F
 
 from .config import CONFIG
+
+LOGGER = logging.getLogger(__name__)
 
 
 class KeyValueMemory:
@@ -37,11 +40,15 @@ class KeyValueMemory:
             "value_vector": value_vector,
         }
         self.values.append(stored_value)
+        default_created = float(metadata.get("created_at", len(self.metadata)))
         meta = {
             "confidence": metadata.get("confidence", 0.2),
             "retrieval_count": metadata.get("retrieval_count", 0),
             "success_rate": metadata.get("success_rate", 0.0),
             "story_hash": metadata.get("story_hash"),
+            "created_at": default_created,
+            "domain": metadata.get("domain", "general"),
+            "emotion": float(metadata.get("emotion", 0.5)),
         }
         self.metadata.append(meta)
         if len(self.values) > CONFIG.get("memory_cap", 1000):
@@ -57,7 +64,13 @@ class KeyValueMemory:
         self.values = [self.values[i] for i in keep_list]
         self.metadata = [self.metadata[i] for i in keep_list]
 
-    def retrieve(self, query_embedding: torch.Tensor, top_k: int = 5) -> Tuple[torch.Tensor, Dict[str, object]]:
+    def retrieve(
+        self,
+        query_embedding: torch.Tensor,
+        top_k: int = 5,
+        context_modulator=None,
+        context_signals=None,
+    ) -> Tuple[torch.Tensor, Dict[str, object]]:
         if self.keys.numel() == 0:
             default = torch.zeros_like(query_embedding)
             details = {"avg_hits": 0.0, "topk_indices": [[] for _ in range(query_embedding.shape[0] if query_embedding.dim() > 1 else 1)], "avg_similarity": 0.0}
@@ -71,6 +84,13 @@ class KeyValueMemory:
         query = self._normalize(query.to(self.device))
         keys = self.keys
         similarities = torch.clamp(F.linear(query, keys), min=0.0)
+        if context_modulator is not None:
+            try:
+                similarities = context_modulator.compute_context_modulated_similarity(
+                    similarities, self.metadata, context_signals
+                )
+            except Exception as exc:
+                LOGGER.warning("Context modulation failed: %s", exc)
         min_sim = similarities.min().item()
         max_sim = similarities.max().item()
         mean_sim = similarities.mean().item()
@@ -110,7 +130,10 @@ class KeyValueMemory:
             "topk_indices": topk_indices,
             "avg_similarity": float(np.mean(sim_scores)) if sim_scores else 0.0,
         }
-        return result.detach(), details
+        result = result.detach()
+        if context_signals is not None:
+            details["context"] = context_signals
+        return result, details
 
     def update_confidence(self, entry_id: int, success_signal: float) -> None:
         if entry_id < 0 or entry_id >= len(self.metadata):

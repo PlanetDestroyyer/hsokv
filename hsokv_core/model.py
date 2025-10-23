@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from .config import CONFIG, override_config
 from .memory import KeyValueMemory
+from .context_retrieval import ContextualRetrievalModule
 
 
 class PositionalEncoding(nn.Module):
@@ -56,6 +57,8 @@ class TransformerWithKV(nn.Module):
         )
         self.classifier = nn.Linear(config["d_model"], num_labels)
         self.kv_memory = KeyValueMemory(config["d_model"], torch.device(self.device_name))
+        self.use_context_retrieval = bool(config.get("use_context_retrieval", True))
+        self._context_module: Optional[ContextualRetrievalModule] = None
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, top_k: int = 5) -> Tuple[torch.Tensor, Dict[str, object]]:
         embeddings = self.embedding(input_ids) * math.sqrt(self.config["d_model"])
@@ -64,9 +67,27 @@ class TransformerWithKV(nn.Module):
         hidden = self.layer_norm(hidden)
         mask = attention_mask.unsqueeze(-1)
         pooled = (hidden * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
-        retrieved, kv_details = (torch.zeros_like(pooled), {"avg_hits": 0.0, "topk_indices": [], "avg_similarity": 0.0})
+        retrieved, kv_details = (
+            torch.zeros_like(pooled),
+            {"avg_hits": 0.0, "topk_indices": [], "avg_similarity": 0.0},
+        )
         if self.config.get("use_kv", True):
-            retrieved, kv_details = self.kv_memory.retrieve(pooled.detach(), top_k=top_k)
+            context_signals = None
+            context_modulator = None
+            if self.use_context_retrieval:
+                if self._context_module is None:
+                    self._context_module = ContextualRetrievalModule(self.config)
+                current_step = self._context_module.next_step()
+                context_signals = self._context_module.extract_context_signals(
+                    hidden.detach(), pooled.detach(), current_step
+                )
+                context_modulator = self._context_module
+            retrieved, kv_details = self.kv_memory.retrieve(
+                pooled.detach(),
+                top_k=top_k,
+                context_modulator=context_modulator,
+                context_signals=context_signals,
+            )
             if retrieved.dim() == 1:
                 retrieved = retrieved.unsqueeze(0)
         gate = torch.sigmoid(self.gate_network(pooled))

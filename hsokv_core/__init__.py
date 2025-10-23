@@ -16,6 +16,7 @@ from .distributed import run_distributed_swarm
 from .memory import KeyValueMemory
 from .model import BaselineTransformer, TransformerWithKV
 from .metrics import estimate_model_flops, latex_table_from_metrics, summarize_history
+from .context_retrieval import ContextualRetrievalModule
 from .consolidation import ConsolidationModule
 from .swarm import Agent, Manager, Supervisor, compute_swarm_diversity
 from .training import (
@@ -41,6 +42,7 @@ __all__ = [
     "override_config",
     "relevant_ablation_variants",
     "ConsolidationModule",
+    "ContextualRetrievalModule",
     "RARE_WORD_SPECS",
     "SimpleTokenizer",
     "generate_dataset",
