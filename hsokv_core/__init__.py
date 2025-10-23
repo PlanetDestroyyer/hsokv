@@ -16,6 +16,7 @@ from .distributed import run_distributed_swarm
 from .memory import KeyValueMemory
 from .model import BaselineTransformer, TransformerWithKV
 from .metrics import estimate_model_flops, latex_table_from_metrics, summarize_history
+from .consolidation import ConsolidationModule
 from .swarm import Agent, Manager, Supervisor, compute_swarm_diversity
 from .training import (
     compute_convergence_step,
@@ -39,6 +40,7 @@ __all__ = [
     "run_split_cifar_benchmark",
     "override_config",
     "relevant_ablation_variants",
+    "ConsolidationModule",
     "RARE_WORD_SPECS",
     "SimpleTokenizer",
     "generate_dataset",

@@ -10,6 +10,7 @@ import torch.nn as nn
 from tqdm.auto import tqdm
 
 from .config import CONFIG
+from .consolidation import ConsolidationModule
 from .data import RARE_WORD_SPECS, prepare_dataloaders
 from .metrics import estimate_model_flops, summarize_history
 from .model import BaselineTransformer, TransformerWithKV
@@ -245,6 +246,7 @@ def train_hsokv(
         kv_state=initial_kv_state,
     )
     logs: List[Dict[str, object]] = []
+    consolidation_history: List[Dict[str, float]] = []
     total_iterations = config["meta_iterations"]
     pbar = tqdm(range(total_iterations), desc="Meta-iterations")
     iteration_times: List[float] = []
@@ -291,6 +293,31 @@ def train_hsokv(
                 "retention": f"{best_metrics['retention']:.2f}",
             }
         )
+        if (iteration + 1) % 5 == 0:
+            best_model = supervisor.get_best_model()
+            consolidator = ConsolidationModule(
+                best_model,
+                config,
+                tokenizer,
+                label_names=label_names,
+                device=device,
+            )
+            metrics = consolidator.consolidate()
+            consolidation_history.append(
+                {
+                    "iteration": iteration,
+                    "consolidated_count": metrics.consolidated_count,
+                    "memory_freed": metrics.memory_freed,
+                    "avg_loss": metrics.avg_loss,
+                }
+            )
+            if metrics.consolidated_count > 0:
+                supervisor.update_states_from_model(best_model)
+                pbar.write(
+                    f"[Consolidation] Iteration {iteration + 1}: "
+                    f"consolidated={metrics.consolidated_count}, "
+                    f"avg_loss={metrics.avg_loss:.4f}"
+                )
     model = supervisor.get_best_model()
     test_metrics = evaluate_model(model, dataloaders["test_loader"], device, top_k=5, one_shot_ids=one_shot_ids)
     retention = evaluate_retention(model, dataloaders["retention_loader"], device)
@@ -307,6 +334,7 @@ def train_hsokv(
         "history": supervisor.global_memory["history"],
         "history_stats": summarize_history(supervisor.global_memory["history"]),
         "strategy_counts": supervisor.global_memory["strategy_counts"],
+        "consolidation_history": consolidation_history,
         "test_metrics": test_metrics,
         "retention": retention,
         "one_shot_ids": one_shot_ids,

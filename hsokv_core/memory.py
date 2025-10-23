@@ -165,3 +165,20 @@ class KeyValueMemory:
             for val in state["values"]
         ]
         self.metadata = [dict(meta) for meta in state["metadata"]]
+
+    def remove_indices(self, indices: List[int]) -> None:
+        """Remove memories at the specified indices."""
+        if not indices:
+            return
+        unique_indices = sorted(set(i for i in indices if 0 <= i < len(self.values)))
+        if not unique_indices:
+            return
+        keep_mask = torch.ones(len(self.values), dtype=torch.bool, device=self.device)
+        keep_mask[unique_indices] = False
+        if keep_mask.any():
+            self.keys = self.keys[keep_mask]
+        else:
+            self.keys = torch.empty(0, self.key_dim, device=self.device)
+        keep_list = [i for i, flag in enumerate(keep_mask.detach().cpu().tolist()) if flag]
+        self.values = [self.values[i] for i in keep_list]
+        self.metadata = [self.metadata[i] for i in keep_list]

@@ -302,3 +302,10 @@ class Supervisor:
             model.kv_memory.load_state(self.best_kv_state)
         model.to(self.device)
         return model
+
+    def update_states_from_model(self, model: TransformerWithKV) -> None:
+        state = deepcopy(model.state_dict())
+        kv_state = model.kv_memory.get_state()
+        self.best_state = state
+        self.base_state = deepcopy(state)
+        self.best_kv_state = deepcopy(kv_state)
