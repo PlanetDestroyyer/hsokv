@@ -93,6 +93,7 @@ PRESET_CONFIGS: Dict[str, Dict[str, object]] = {
         "num_managers": 1,
         "lm_seq_length": 32,
         "lm_stride": 16,
+        "flops_target": 5e6,
     },
     "demo": {
         "meta_iterations": 5,
