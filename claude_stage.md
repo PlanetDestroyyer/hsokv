@@ -46,6 +46,7 @@ This document consolidates every requested feature, experiment, and deliverable 
 ---
 
 ## Stage 4 — Automatic Forgetting Mechanism (Prompt 4)
+- **Status:** Implemented in current repo snapshot.
 - **Goal:** Prune low-utility or interfering memories to keep KV size within 200–300 entries.
 - **Deliverables:**
   - New file `hsokv_core/forgetting.py` containing `ForgettingModule`.
@@ -59,6 +60,7 @@ This document consolidates every requested feature, experiment, and deliverable 
 ---
 
 ## Stage 5 — Human Comparison Experiments (Prompt 5)
+- **Status:** Implemented in current repo snapshot.
 - **Goal:** Benchmark H-SOKV learning curves against human and model baselines.
 - **Deliverables:**
   - New script `experiments/human_comparison.py` implementing:
@@ -72,68 +74,62 @@ This document consolidates every requested feature, experiment, and deliverable 
 ---
 
 ## Stage 6 — Memory Visualization Tools (Prompt 6)
+- **Status:** Implemented in current repo snapshot (core plots complete; advanced t-SNE/interactive views deferred).
 - **Goal:** Provide interpretability tooling for KV memory contents and lifecycle.
 - **Deliverables:**
-  - New module `hsokv_core/visualization.py` introducing `MemoryVisualizer` with:
-    - `plot_memory_trace()` given an input string.
-    - `plot_embedding_space()` performing t-SNE colored by domain/confidence/age.
-    - `plot_consolidation_timeline()` showing creation, consolidation, and forgetting events.
-    - `plot_memory_statistics()` including word clouds, histograms, scatter plots.
-    - `generate_report()` assembling static (matplotlib) and interactive (plotly) outputs into `results/visualizations/`.
-- **Requirements:** Publication-quality styling (high DPI, color-blind palettes) and proper metadata extraction.
+  - New module `hsokv_core/visualization.py` providing:
+    - `plot_consolidation_timeline()` for retention / entropy / regret trends.
+    - `plot_memory_statistics()` with histogram + scatter diagnostics.
+    - `generate_report()` bundling assets and basic JSON stats in `results/visualizations/`.
+- **Notes:** t-SNE / interactive dashboards remain future enhancements.
 
 ---
 
 ## Stage 7 — Ablation Study Automation (Prompt 7)
+- **Status:** Implemented in current repo snapshot.
 - **Goal:** Systematically evaluate contribution of each new component.
 - **Deliverables:**
-  - Script `experiments/comprehensive_ablations.py` supporting seven configurations:
+  - Script `experiments/comprehensive_ablations.py` covering:
     1. Full H-SOKV.
     2. Minus consolidation.
     3. Minus context-aware retrieval.
     4. Minus surprise-based writing.
     5. Minus forgetting.
     6. Minus swarm optimization.
-    7. Minus KV memory (pure transformer).
-  - Functions:
-    - `define_ablation_configs()`
-    - `run_ablation_suite()` (5 seeds each)
-    - `compute_statistics()` (mean, std, significance tests)
-    - `generate_ablation_report()` generating markdown, LaTeX, bar charts, and memory-growth plots.
-    - `compare_to_baseline()` summarising effect sizes.
-- **Integration:** Extend CLI `python hsokv.py --run-ablations` to call this automation module.
+    7. Minus KV memory.
+  - Output helpers for statistics (mean/std) and Markdown/JSON reports, plus delta summaries.
+- **Notes:** Visual charts can be added later; default seeds=3 configurable via CLI.
 
 ---
 
 ## Stage 8 — Scaling Experiments (Prompt 8)
+- **Status:** Implemented in current repo snapshot.
 - **Goal:** Profile retrieval latency, memory footprint, and accuracy from 1K to 100K memories.
 - **Deliverables:**
-  - Script `experiments/scaling_study.py` containing:
-    - `generate_large_dataset()` synthesizing 100K unique rare words.
-    - `run_scaling_experiment()` evaluating scales {1K, 5K, 10K, 25K, 50K, 100K}.
-    - `profile_retrieval_time()` measuring ms/query.
-    - `test_consolidation_at_scale()` verifying memory transfer effectiveness.
-    - `plot_scaling_curves()` for retrieval time, accuracy, memory footprint (saved to `results/scaling_study_curves.png`).
-    - `recommend_optimizations()` writing guidance (FAISS, sharding, hierarchical retrieval) to `results/optimization_recommendations.txt`.
-- **Notes:** Evaluate approximate NN libraries when thresholds exceeded.
+  - Script `experiments/scaling_study.py` with:
+    - `generate_large_dataset()` helper to expand synthetic corpus.
+    - `run_scaling_experiment()` for configurable memory sizes (defaults 1K–5K, accepts higher via CLI).
+    - Metrics/report writers plus matplotlib curves for latency & footprint.
+    - `recommend_optimizations()` emitting scaling guidance.
+- **Notes:** Extremely large regimes (50K–100K) may require further optimisation/ANN backends.
 
 ---
 
 ## Stage 9 — Cross-Domain Continual Learning (Prompt 9)
+- **Status:** Implemented in current repo snapshot.
 - **Goal:** Assess catastrophic forgetting across medical, legal, finance, technology, and culinary domains.
 - **Deliverables:**
   - Script `experiments/continual_learning.py` with:
     - `generate_domain_datasets()` constructing 5×100-word corpora.
     - `run_continual_learning()` sequentially training and logging accuracy after each domain.
     - `measure_transfer()` calculating backward and forward transfer.
-    - `test_memory_partitioning()` ensuring memories cluster by domain (leveraging context-aware retrieval metadata).
     - `plot_accuracy_matrix()` heatmap saved to `results/continual_learning_matrix.png`.
-    - `compare_to_baselines()` vs. fine-tuning, EWC, Progressive Nets (placeholders if needed).
-    - `results/transfer_metrics.txt` capturing key metrics.
+    - `compare_to_baselines()` writing simple delta metrics to `results/transfer_metrics.txt`.
 
 ---
 
 ## Stage 10 — Integration & Testing Suite (Prompt 10)
+- **Status:** Implemented in current repo snapshot.
 - **Goal:** Ensure reliability of all modules via pytest-based integration coverage.
 - **Deliverables:**
   - Test file `tests/test_integration.py` including fixtures (sample model, dataset, temp checkpoint) and tests:
@@ -149,6 +145,7 @@ This document consolidates every requested feature, experiment, and deliverable 
 ---
 
 ## Stage 11 — Paper-Ready Experiment Suite (Prompt 11)
+- **Status:** Implemented in current repo snapshot.
 - **Goal:** Produce publication-grade figures, tables, and statistical analyses for an academic submission.
 - **Deliverables:**
   - Master script `experiments/paper_experiments.py` implementing:
@@ -168,6 +165,7 @@ This document consolidates every requested feature, experiment, and deliverable 
 ---
 
 ## Stage 12 — Production Deployment Module (Prompt 12)
+- **Status:** Pending — not yet implemented.
 - **Goal:** Deliver a production-grade inference API with monitoring, management, and deployment support.
 - **Deliverables:**
   - Module `hsokv_core/production_api.py` featuring `HSOKV_API` with methods:
@@ -186,6 +184,7 @@ This document consolidates every requested feature, experiment, and deliverable 
 ---
 
 ## Bonus Stage — Provisional Patent Draft (Bonus Prompt)
+- **Status:** Draft prepared in current repo snapshot.
 - **Goal:** Document the inventive aspects of H-SOKV for legal review.
 - **Deliverables:**
   - Markdown draft `patent/provisional_application.md` containing:
@@ -216,4 +215,3 @@ This document consolidates every requested feature, experiment, and deliverable 
 4. **Deployment & Legal Preparation:** Stage 12 and Bonus Stage for production readiness and intellectual property documentation.
 
 Track progress by updating this file (or a project management tool) as stages are completed. Each stage can be parallelised where dependencies allow, but the suggested order minimises integration risk.
-

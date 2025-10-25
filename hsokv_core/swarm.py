@@ -1,6 +1,7 @@
 """Hierarchical swarm components."""
 
 import itertools
+import logging
 import random
 import time
 from collections import Counter
@@ -15,8 +16,11 @@ import torch.nn as nn
 from .config import CONFIG
 from .memory import KeyValueMemory
 from .model import TransformerWithKV
+from .surprise_writing import SurpriseBasedWriter
+from .forgetting import ForgettingModule
 from .utils import compute_swarm_diversity, compute_usage_correctness, move_batch_to_device
 
+LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class AgentConfig:
@@ -46,6 +50,7 @@ class Agent:
         self.kv_retrieval_k = random.randint(*config["kv_top_k_range"])
         self.steps = config["agent_steps"]
         self.encoded_cache: Dict[str, torch.Tensor] = {}
+        self.surprise_writer = SurpriseBasedWriter(config)
 
     def adjust_strategy(self, strategy: str, learning_rate: Optional[float] = None, kv_k: Optional[int] = None) -> None:
         self.strategy = strategy
@@ -108,7 +113,7 @@ class Agent:
                     f"KV Hit: {kv_hit_val:.2f} | Samples/sec: {samples_per_sec:.1f}"
                 )
             if self.config.get("use_kv", True):
-                self._update_memory(model, batch, info["pooled"])
+                self._update_memory(model, batch, info["pooled"], logits.detach())
             if len(model.kv_memory) > self.config["max_memory_entries"]:
                 model.kv_memory.prune(self.config["kv_confidence_threshold"])
         val_metrics = task_data["evaluate_model"](model, task_data["val_loader"], self.device, self.kv_retrieval_k, task_data["one_shot_ids"])
@@ -145,32 +150,38 @@ class Agent:
             return torch.optim.RMSprop(params, lr=self.learning_rate, momentum=0.9)
         return torch.optim.Adam(params, lr=self.learning_rate)
 
-    def _update_memory(self, model: TransformerWithKV, batch: Dict[str, object], pooled: torch.Tensor) -> None:
+    def _update_memory(
+        self,
+        model: TransformerWithKV,
+        batch: Dict[str, object],
+        pooled: torch.Tensor,
+        logits: torch.Tensor,
+    ) -> None:
         with torch.no_grad():
-            seen_in_batch = set()
-            for vector, definition, usage, rare_word in zip(
-                pooled,
-                batch["definitions"],
-                batch["usages"],
-                batch["rare_words"],
-            ):
-                if not rare_word or rare_word in seen_in_batch:
-                    continue
-                seen_in_batch.add(rare_word)
-                story_hash = hash((rare_word, definition, usage))
-                if any(meta["story_hash"] == story_hash for meta in model.kv_memory.metadata):
-                    continue
-                cache_key = rare_word
-                if cache_key not in self.encoded_cache:
-                    self.encoded_cache[cache_key] = model.encode_text(
-                        definition + " " + usage, self.config["definition_max_length"]
-                    ).detach()
-                value_vector = self.encoded_cache[cache_key]
-                model.kv_memory.write(
-                    key_embedding=vector,
-                    value_dict={"word": rare_word, "definition": definition, "usage": usage, "value_vector": value_vector},
-                    metadata={"confidence": 0.25, "retrieval_count": 0, "success_rate": 0.0, "story_hash": story_hash},
+            try:
+                stats = self.surprise_writer.selective_write(
+                    model=model,
+                    memory=model.kv_memory,
+                    batch=batch,
+                    pooled=pooled,
+                    logits=logits,
+                    cache=self.encoded_cache,
                 )
+            except Exception as exc:
+                LOGGER.warning("Surprise-based writing failed; falling back to legacy path: %s", exc)
+                stats = self.surprise_writer._legacy_write(  # pylint: disable=protected-access
+                    model=model,
+                    memory=model.kv_memory,
+                    batch=batch,
+                    pooled=pooled,
+                    cache=self.encoded_cache,
+                )
+            LOGGER.debug(
+                "Agent %s memory update | writes=%s skips=%s",
+                self.agent_id,
+                stats.get("writes"),
+                stats.get("skips"),
+            )
 
 
 class Manager:
@@ -222,6 +233,7 @@ class Supervisor:
         self.best_state: Optional[Dict[str, torch.Tensor]] = None
         self.best_kv_state: Optional[Dict[str, object]] = None
         self.best_score = -float("inf")
+        self.forgetting_module: Optional[ForgettingModule] = None
         strategies = ["sgd", "adam", "rmsprop", "random_search"]
         agent_count = 0
         for manager_id in range(config["num_managers"]):
@@ -249,6 +261,15 @@ class Supervisor:
         self.best_kv_state = deepcopy(base_model.kv_memory.get_state()) if len(base_model.kv_memory) else None
         if kv_state:
             self.best_kv_state = deepcopy(kv_state)
+        if config.get("use_forgetting", True):
+            self.forgetting_module = ForgettingModule(
+                base_model.kv_memory,
+                memory_cap=config.get("max_memory_entries", 400),
+                confidence_threshold=config.get("kv_confidence_threshold", 0.15),
+                trigger_interval=int(config.get("forgetting_interval", 10)),
+                utility_threshold=float(config.get("forgetting_utility_threshold", 0.25)),
+                similarity_threshold=float(config.get("forgetting_similarity_threshold", 0.8)),
+            )
         del base_model
 
     def run_meta_iteration(self, task_data: Dict[str, object], iteration: int) -> Dict[str, object]:
@@ -287,6 +308,7 @@ class Supervisor:
             }
         )
         self.global_memory["strategy_counts"].append(strategy_counter)
+        self._maybe_forget(iteration)
         return {
             "iteration": iteration,
             "manager_outputs": manager_outputs,
@@ -309,3 +331,31 @@ class Supervisor:
         self.best_state = state
         self.base_state = deepcopy(state)
         self.best_kv_state = deepcopy(kv_state)
+
+    def _maybe_forget(self, iteration: int) -> None:
+        if (
+            not self.config.get("use_kv", True)
+            or not self.config.get("use_forgetting", True)
+            or self.forgetting_module is None
+        ):
+            return
+        model = self.get_best_model()
+        self.forgetting_module.memory = model.kv_memory
+        if not self.forgetting_module.should_forget(iteration):
+            model.to("cpu")
+            del model
+            return
+        report = self.forgetting_module.forget(
+            iteration,
+            current_step=float(iteration + 1),
+        )
+        if report.forgotten_count:
+            LOGGER.info(
+                "Iteration %s forgetting removed %s memories (remaining=%s)",
+                iteration + 1,
+                report.forgotten_count,
+                report.memory_size_after,
+            )
+            self.update_states_from_model(model)
+        model.to("cpu")
+        del model

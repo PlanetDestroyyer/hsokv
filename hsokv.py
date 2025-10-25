@@ -35,6 +35,13 @@ from hsokv_core import (
 from hsokv_core.benchmarks import BenchmarkResult
 from hsokv_core.training import evaluate_model, evaluate_retention
 from hsokv_core.metrics import summarize_history
+from experiments.comprehensive_ablations import (
+    define_ablation_configs,
+    run_ablation_suite as run_comprehensive_ablation_suite,
+    compute_statistics as compute_ablation_statistics,
+    generate_ablation_report as generate_comprehensive_report,
+    compare_to_baseline as summarize_ablation_deltas,
+)
 
 PRESET_RUNTIME_HINTS: Dict[str, str] = {
     "quick_test": "2-3 min expected runtime",
@@ -513,6 +520,14 @@ def run_experiment(args: argparse.Namespace) -> None:
             baseline_standard,
             baseline_kv,
         )
+        print("\nRunning comprehensive ablation automation...")
+        comp_configs = define_ablation_configs(config)
+        seeds = tuple(range(2))
+        comp_outcomes = run_comprehensive_ablation_suite(comp_configs, seeds)
+        stats = compute_ablation_statistics(comp_outcomes)
+        report_path = generate_comprehensive_report(stats)
+        summarize_ablation_deltas(stats)
+        print(f"Comprehensive ablation report written to {report_path}")
 
     benchmark_tag = args.benchmark.lower()
     if benchmark_tag != "synthetic":

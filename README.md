@@ -9,20 +9,28 @@ H-SOKV couples a lightweight transformer backbone with an adaptive key–value m
 ```
 hsokv.py                  # CLI entrypoint and experiment orchestration
 hsokv_core/
-  ablations.py           # Ablation suite (full, KV-only, swarm-only, neither)
+  ablations.py           # Prompt-1 suite plus automation hooks
   benchmarks.py          # Few-shot GLUE + Split-CIFAR loaders/evaluators
   config.py              # Global CONFIG dict and override helpers
+  consolidation.py       # Stage-1 consolidation module
+  context_retrieval.py   # Stage-2 context-aware retrieval
   data.py                # Synthetic rare-word dataset + tokenizer utilities
   distributed.py         # Toy CartPole swarm simulator (Ray/mp/simulate)
+  forgetting.py          # Stage-4 automatic forgetting utilities
   hf_adapter.py          # Hugging Face-style trainer wrapper (HFSwarmTrainer)
   memory.py              # Normalised KeyValueMemory implementation
   model.py               # TransformerWithKV + BaselineTransformer
   metrics.py             # FLOP estimation and reporting helpers
+  surprise_writing.py    # Stage-3 surprise-based selective writer
   swarm.py               # Agent / Manager / Supervisor hierarchy
   training.py            # Core training loops and baselines
+  visualization.py       # Stage-6 timeline/statistics reporting
   utils.py               # Device helpers, seeding, diversity metrics
+experiments/              # Stage-5–11 experiment pipelines (human, scaling, continual, paper, etc.)
 results/                  # Plots, tables, and benchmark logs (created on demand)
 docs/                     # Colab walkthrough and supplementary notes
+tests/                    # Pytest integration suite (Stage 10)
+patent/                   # Provisional draft + placeholder figures (bonus stage)
 ```
 
 ---
@@ -48,6 +56,9 @@ python hsokv.py --iterations 10 --visualize
 
 # Validation suite (sanity checks for KV, swarm, benchmarks, distributed sim)
 python hsokv.py --mode test
+
+# Pytest integration checks (consolidation, forgetting, surprise writing, e2e)
+pytest tests/test_integration.py -k full_training_pipeline
 ```
 
 ---
@@ -123,7 +134,17 @@ python hsokv.py --iterations 1 --run-distributed --distributed-backend ray --vis
 
 Generates `results/distributed_speedup.png`, `distributed_throughput.png`, and `distributed_reward.png`.
 
-### 3.5 Hugging Face Trainer Workflow
+### 3.5 Complementary Experiment Pipelines (Stages 5–11)
+
+- **Human vs model comparison:** `python -m experiments.human_comparison`
+- **Comprehensive ablations (Stage 7):** `python -m experiments.comprehensive_ablations --seeds 3`
+- **Scaling study (Stage 8):** `python -m experiments.scaling_study --scales 1000 5000 10000`
+- **Cross-domain continual learning (Stage 9):** `python -m experiments.continual_learning --seeds 2`
+- **Paper-ready bundle (Stage 11):** `python -m experiments.paper_experiments --seeds 3`
+
+Outputs are written under `results/` (e.g., `results/human_comparison/`, `results/ablations/`, `results/paper/`).
+
+### 3.6 Hugging Face Trainer Workflow
 
 #### CLI
 ```bash
@@ -146,7 +167,7 @@ print(summary["test_metrics"])
 trainer.save_model("outputs/hsokv_hf")
 ```
 
-### 3.6 Checkpoint Management
+### 3.7 Checkpoint Management
 
 - Save: `python hsokv.py --iterations 5 --save-pretrained outputs/hsokv_checkpoint`
 - Load/Evaluate: `python hsokv.py --load-pretrained outputs/hsokv_checkpoint --visualize`
@@ -170,15 +191,18 @@ A step-by-step notebook outline (environment setup, GLUE/CIFAR runs, distributed
 
 ## 5. Research Summary
 
-- **Architecture:** 4-layer transformer (d_model=256) with gated KV retrieval. Memory embeddings are ℓ2-normalised; confidence-weighted updates encourage reliable entries.
-- **Swarm Optimisation:** Hierarchical loop of agents (optimiser/learning-rate search) managed by pooling strategies, overseen by a supervisor tracking entropy/regret. Supports diverse strategies and distributed execution.
-- **Benchmarks:**
-  - *Few-shot GLUE:* 16-shot SST-2/MNLI with FLOP-aligned baselines (fine-tune, KV-only, in-context)
-  - *Split-CIFAR-10:* 5-task continual learning evaluating retention and backward transfer
-- **Distributed Swarm:** Toy CartPole-like environment to demonstrate scaling behaviour (Ray, multiprocessing, or deterministic simulator).
-- **HF/OSS Hooks:** Pretrained checkpoints, trainer wrapper, and documented workflow for reproducibility.
+- **Architecture:** 4-layer transformer (d_model=256) with gated KV retrieval. Memory embeddings are ℓ2-normalised; surprise/novelty gating regulates writes, confidence-weighted updates promote reliable entries, and forgetting utilities keep the store compact.
+- **Swarm Optimisation:** Hierarchical loop of agents (optimiser/learning-rate strategies) overseen by a supervisor that monitors entropy, regret, and retention. Optional distributed execution across Ray / multiprocessing / simulated backends.
+- **Memory Lifecycle (Stages 1–4):** Consolidation transfers high-confidence memories into model weights, context-aware retrieval boosts relevant domains/emotions, selective writing throttles redundancy, and automatic forgetting prunes low-utility or interfering entries.
+- **Benchmarking & Experiments (Stages 5–11):**
+  - *Few-shot GLUE / Split-CIFAR:* Baselines (fine-tune, KV-only, in-context) with FLOP accounting.
+  - *Human comparison suite:* Learning curves against simulated human scores.
+  - *Scaling study:* Retrieval latency and footprint vs. memory size with optimisation tips.
+  - *Cross-domain continual learning:* Forward/backward transfer diagnostics (heatmaps, metrics).
+  - *Paper-ready pipeline:* Figures, tables, and stats under `results/paper/`.
+- **Tooling:** Visualisation helpers, comprehensive ablation automation, pytest integration suite, and a provisional patent draft capturing novelty areas.
 
-Pending work before publication: execute real-data sweeps (`--allow-download`), tune hyperparameters for <30 minute runs, and curate plots/tables for Stage 6 packaging.
+Remaining roadmap item: Stage 12 production deployment module (inference API, service packaging).
 
 ---
 
@@ -186,18 +210,26 @@ Pending work before publication: execute real-data sweeps (`--allow-download`), 
 
 | Stage | Focus | Status |
 |-------|-------|--------|
-| 1 | Core hardening (KV normalisation, budgets) | ✅ Completed |
-| 2 | Ablations & instrumentation | ✅ Completed |
-| 3 | GLUE & Split-CIFAR benchmarks | ✅ Completed (real-data run outstanding) |
-| 4 | Distributed swarm simulation | ✅ Completed |
-| 5 | Hugging Face & OSS hooks | 🔄 In progress (trainer + docs done; real-data Colab verification pending) |
-| 6 | Final validation & packaging | ⏳ Pending |
+| 1 | Memory consolidation module | ✅ Completed |
+| 2 | Context-aware retrieval | ✅ Completed |
+| 3 | Surprise-based selective writing | ✅ Completed |
+| 4 | Automatic forgetting mechanism | ✅ Completed |
+| 5 | Human comparison experiments | ✅ Completed |
+| 6 | Memory visualisation toolkit | ✅ Completed (advanced interactive views pending) |
+| 7 | Comprehensive ablation automation | ✅ Completed |
+| 8 | Scaling experiments | ✅ Completed (extended ANN backends optional) |
+| 9 | Cross-domain continual learning suite | ✅ Completed |
+| 10 | Pytest integration & validation | ✅ Completed |
+| 11 | Paper-ready experiment suite | ✅ Completed |
+| 12 | Production deployment API | ⏳ Pending |
+| Bonus | Provisional patent draft | ✅ Draft prepared |
 
 ---
 
 ## 7. Reproducibility Checklist
 
 - `python hsokv.py --mode test` (sanity suite)
+- `pytest tests/test_integration.py` (integration coverage)
 - `python hsokv.py --iterations 10 --visualize` (synthetic)
 - `python hsokv.py --benchmark glue --allow-download` (real few-shot GLUE)
 - `python hsokv.py --benchmark cifar --allow-download` (Split-CIFAR continual)
@@ -231,3 +263,4 @@ Run each command; inspect `results/` and `outputs/` for plots, tables, and check
 ---
 
 Questions or issues? Open a GitHub issue or reach out via the project discussion board. Happy experimenting!
+

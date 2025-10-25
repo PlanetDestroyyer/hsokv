@@ -32,6 +32,11 @@ CONFIG: Dict[str, object] = {
     "kv_confidence_threshold": 0.15,
     "max_memory_entries": 400,
     "memory_cap": 1000,
+    "use_consolidation": True,
+    "use_forgetting": True,
+    "forgetting_interval": 10,
+    "forgetting_similarity_threshold": 0.8,
+    "forgetting_utility_threshold": 0.25,
     "results_dir": "results",
     "retention_distractor_factor": 5,
     "baseline_epochs": 6,
@@ -82,6 +87,10 @@ CONFIG: Dict[str, object] = {
     "context_emotion_scale": 0.3,
     "context_importance_scale": 0.5,
     "context_domains": ["general", "medical", "legal", "finance", "technology", "culinary"],
+    "use_surprise_writing": True,
+    "surprise_threshold": 0.5,
+    "novelty_threshold": 0.7,
+    "surprise_min_confidence": 0.05,
 }
 
 PRESET_CONFIGS: Dict[str, Dict[str, object]] = {
