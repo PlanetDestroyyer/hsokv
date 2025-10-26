@@ -92,6 +92,11 @@ class SurpriseBasedWriter:
         writes = 0
         skips = 0
         seen_in_batch = set()
+        existing_words = {
+            entry.get("word")
+            for entry in getattr(memory, "values", [])
+            if isinstance(entry, dict) and entry.get("word")
+        }
         surprise_list: List[float] = surprise_scores.detach().cpu().tolist()
         novelty_list: List[float] = novelty_scores.detach().cpu().tolist()
 
@@ -109,7 +114,11 @@ class SurpriseBasedWriter:
                 skips += 1
                 continue
 
-            if not bool(should_store.item() if torch.is_tensor(should_store) else should_store):
+            should_store_flag = bool(should_store.item() if torch.is_tensor(should_store) else should_store)
+            if rare_word not in existing_words:
+                should_store_flag = True
+
+            if not should_store_flag:
                 skips += 1
                 continue
 
@@ -136,6 +145,7 @@ class SurpriseBasedWriter:
                     metadata=metadata,
                 )
                 writes += 1
+                existing_words.add(rare_word)
             except Exception as exc:
                 skips += 1
                 LOGGER.warning("Selective write failed for '%s': %s", rare_word, exc)

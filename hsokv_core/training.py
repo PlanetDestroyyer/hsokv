@@ -96,6 +96,9 @@ def _apply_swarm_flop_budget(config: Dict[str, object], flops_per_step: float) -
             max_total_steps // (config["num_managers"] * config["agents_per_manager"] * config["meta_iterations"]),
         )
         config["agent_steps"] = adjusted_agent_steps
+        steps_per_meta = max(1, config["num_managers"] * config["agents_per_manager"] * config["agent_steps"])
+        total_steps = config["meta_iterations"] * steps_per_meta
+    config["swarm_flop_budget"] = float(total_steps) * float(flops_per_step)
     return config
 
 
@@ -133,6 +136,7 @@ def train_hsokv(
     else:
         config = dict(base_config)
         config["_max_training_steps"] = max(1, int(config["flops_target"] / flops_per_step))
+        config["swarm_flop_budget"] = float(config["_max_training_steps"]) * float(flops_per_step)
 
     def model_factory():
         model_config = dict(config)
@@ -234,6 +238,7 @@ def train_hsokv(
             "flops_estimate": flops_per_step * steps_taken,
             "model_state": model_state_cpu,
             "kv_state": kv_state,
+            "telemetry": dict(config.get("_telemetry", {})),
         }
         return model, summary
 
@@ -311,6 +316,9 @@ def train_hsokv(
                     "avg_loss": metrics.avg_loss,
                 }
             )
+            telemetry = config.setdefault("_telemetry", {})
+            telemetry["consolidation_runs"] = telemetry.get("consolidation_runs", 0) + 1
+            telemetry["consolidated_entries"] = telemetry.get("consolidated_entries", 0) + metrics.consolidated_count
             if metrics.consolidated_count > 0:
                 supervisor.update_states_from_model(best_model)
                 pbar.write(
@@ -342,6 +350,7 @@ def train_hsokv(
         "flops_estimate": flops_per_step * actual_steps,
         "model_state": model_state_cpu,
         "kv_state": kv_state,
+        "telemetry": dict(config.get("_telemetry", {})),
     }
     return model, summary
 
@@ -370,6 +379,7 @@ def train_baseline_standard(
 ) -> Dict[str, object]:
     config = dict(config)
     device = torch.device(config["device"])
+    flop_budget = config.get("baseline_flop_budget") or config.get("swarm_flop_budget") or config.get("flops_target", 1e9)
     if num_labels is None:
         if dataset and dataset.get("train"):
             max_label = max(sample["word_id"] for sample in dataset["train"])
@@ -382,7 +392,7 @@ def train_baseline_standard(
     if initial_state:
         model.load_state_dict(initial_state)
     flops_per_step = max(estimate_model_flops(model, config), 1e-6)
-    max_steps = max(1, int(config["flops_target"] / flops_per_step))
+    max_steps = max(1, int(flop_budget / flops_per_step))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["baseline_lr"])
     criterion = nn.CrossEntropyLoss()
@@ -439,6 +449,7 @@ def train_baseline_kv(
 ) -> Dict[str, object]:
     config = dict(config)
     device = torch.device(config["device"])
+    flop_budget = config.get("baseline_flop_budget") or config.get("swarm_flop_budget") or config.get("flops_target", 1e9)
     if num_labels is None:
         if dataset and dataset.get("train"):
             max_label = max(sample["word_id"] for sample in dataset["train"])
@@ -453,7 +464,7 @@ def train_baseline_kv(
     if initial_kv_state:
         model.kv_memory.load_state(initial_kv_state)
     flops_per_step = max(estimate_model_flops(model, config), 1e-6)
-    max_steps = max(1, int(config["flops_target"] / flops_per_step))
+    max_steps = max(1, int(flop_budget / flops_per_step))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["baseline_lr"])
     criterion = nn.CrossEntropyLoss()

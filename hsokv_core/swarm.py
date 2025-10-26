@@ -51,6 +51,7 @@ class Agent:
         self.steps = config["agent_steps"]
         self.encoded_cache: Dict[str, torch.Tensor] = {}
         self.surprise_writer = SurpriseBasedWriter(config)
+        self._rng = random.Random(config.get("seed", 42) + agent_id)
 
     def adjust_strategy(self, strategy: str, learning_rate: Optional[float] = None, kv_k: Optional[int] = None) -> None:
         self.strategy = strategy
@@ -182,6 +183,9 @@ class Agent:
                 stats.get("writes"),
                 stats.get("skips"),
             )
+            telemetry = self.config.setdefault("_telemetry", {})
+            telemetry["memory_writes"] = telemetry.get("memory_writes", 0) + stats.get("writes", 0)
+            telemetry["memory_skips"] = telemetry.get("memory_skips", 0) + stats.get("skips", 0)
 
 
 class Manager:
@@ -212,6 +216,10 @@ class Manager:
                     agent.adjust_strategy(random.choice(["sgd", "adam", "rmsprop"]))
         self.performance_history.append({"context": task_context, "results": results})
         return {"manager_id": self.manager_id, "results": results, "best": best}
+
+    def reseed_agents(self) -> None:
+        for agent in self.agents:
+            agent.reseed()
 
 
 class Supervisor:
@@ -292,6 +300,10 @@ class Supervisor:
         diversity = compute_swarm_diversity(strategy_counter)
         if iteration == 0 and diversity < 0.8:
             print(f"[Warning] Swarm diversity below target: {diversity:.3f}")
+        elif diversity < 0.5:
+            for manager in self.managers:
+                manager.reseed_agents()
+            LOGGER.info("Swarm diversity low (%.3f); reseeded agent strategies.", diversity)
         gate_entropy = best_overall.get("gate_entropy", 0.0)
         regret = max(0.0, 1.0 - best_overall["val_accuracy"])
         self.global_memory["history"].append(
@@ -349,6 +361,9 @@ class Supervisor:
             iteration,
             current_step=float(iteration + 1),
         )
+        telemetry = self.config.setdefault("_telemetry", {})
+        telemetry["forget_runs"] = telemetry.get("forget_runs", 0) + 1
+        telemetry["forgotten_entries"] = telemetry.get("forgotten_entries", 0) + report.forgotten_count
         if report.forgotten_count:
             LOGGER.info(
                 "Iteration %s forgetting removed %s memories (remaining=%s)",

@@ -493,8 +493,19 @@ def run_experiment(args: argparse.Namespace) -> None:
             )
             dataloaders = hsokv_summary["dataloaders"]
 
-    baseline_standard = train_baseline_standard(dataset, tokenizer, config, num_labels=num_labels)
-    baseline_kv = train_baseline_kv(dataset, tokenizer, config, num_labels=num_labels)
+    baseline_budget = hsokv_summary.get("flops_estimate", config.get("flops_target", 0.0))
+    baseline_standard = train_baseline_standard(
+        dataset,
+        tokenizer,
+        override_config(config, {"baseline_flop_budget": baseline_budget}),
+        num_labels=num_labels,
+    )
+    baseline_kv = train_baseline_kv(
+        dataset,
+        tokenizer,
+        override_config(config, {"baseline_flop_budget": baseline_budget}),
+        num_labels=num_labels,
+    )
     baseline_in_context = in_context_learning(dataset, tokenizer, config)
 
     # FLOP logging for transparency
