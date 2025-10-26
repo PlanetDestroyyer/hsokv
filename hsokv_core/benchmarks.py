@@ -29,6 +29,11 @@ try:
 except Exception:  # pragma: no cover - torchvision optional
     CIFAR10 = None
 
+try:
+    from datasets import load_dataset
+except Exception:  # pragma: no cover - datasets optional
+    load_dataset = None
+
 
 @dataclass
 class BenchmarkResult:
@@ -91,6 +96,9 @@ GLUE_TASKS: Dict[str, Dict[str, object]] = {
         "label_field": "label",
         "label_mapping": {"0": 0, "1": 1},
         "label_names": ["negative", "positive"],
+        "hf_splits": {"train": "train", "validation": "validation", "test": "validation"},
+        "hf_text_fields": {"sentence": "sentence"},
+        "hf_label_field": "label",
     },
     "mnli": {
         "train_file": "train.tsv",
@@ -100,6 +108,9 @@ GLUE_TASKS: Dict[str, Dict[str, object]] = {
         "label_field": "gold_label",
         "label_mapping": {"entailment": 0, "neutral": 1, "contradiction": 2},
         "label_names": ["entailment", "neutral", "contradiction"],
+        "hf_splits": {"train": "train", "validation": "validation_matched", "test": "validation_matched"},
+        "hf_text_fields": {"sentence1": "premise", "sentence2": "hypothesis"},
+        "hf_label_field": "label",
     },
 }
 
@@ -206,12 +217,86 @@ def _records_to_dataset(records: List[Dict[str, object]], label_names: List[str]
     return dataset
 
 
+def _convert_label_to_str(meta: Dict[str, object], value) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, (int, np.integer)):
+        int_val = int(value)
+        if int_val < 0:
+            return None
+        if all(str(k).isdigit() for k in meta["label_mapping"].keys()):
+            return str(int_val)
+        label_names = meta.get("label_names", [])
+        if 0 <= int_val < len(label_names):
+            return str(label_names[int_val])
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _write_glue_split(records, meta: Dict[str, object], path: Path) -> None:
+    fieldnames = list(meta["text_fields"]) + [meta["label_field"]]
+    hf_text_fields = meta.get("hf_text_fields", {})
+    hf_label_field = meta.get("hf_label_field", meta["label_field"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        for row in records:
+            out_row: Dict[str, object] = {}
+            skip = False
+            for target_field in meta["text_fields"]:
+                source_field = hf_text_fields.get(target_field, target_field)
+                value = row.get(source_field, "")
+                if value is None:
+                    skip = True
+                    break
+                out_row[target_field] = str(value)
+            if skip:
+                continue
+            label_value = _convert_label_to_str(meta, row.get(hf_label_field))
+            if label_value is None:
+                continue
+            out_row[meta["label_field"]] = label_value
+            writer.writerow(out_row)
+
+
+def _ensure_glue_data(task_key: str, meta: Dict[str, object], base_dir: Path, allow_download: bool) -> None:
+    required_files = [
+        meta["train_file"],
+        meta["validation_file"],
+        meta["test_file"],
+    ]
+    if all((base_dir / name).exists() for name in required_files):
+        return
+    if not allow_download:
+        missing = next((base_dir / name for name in required_files if not (base_dir / name).exists()), base_dir)
+        raise FileNotFoundError(f"GLUE split not found: {missing}")
+    if load_dataset is None:
+        raise RuntimeError("datasets library is required to download GLUE. Install with 'pip install datasets'.")
+    print(f"[GLUE] Downloading '{task_key}' splits into {base_dir} ...")
+    dataset = load_dataset("glue", task_key)
+    split_map = meta.get("hf_splits", {})
+    file_to_split = {
+        meta["train_file"]: split_map.get("train", "train"),
+        meta["validation_file"]: split_map.get("validation", "validation"),
+        meta["test_file"]: split_map.get("test", split_map.get("validation", "validation")),
+    }
+    for file_name, split_name in file_to_split.items():
+        if split_name not in dataset:
+            raise ValueError(f"Requested split '{split_name}' not available for GLUE/{task_key}.")
+        split_records = dataset[split_name]
+        _write_glue_split(split_records, meta, base_dir / file_name)
+    print(f"[GLUE] Saved GLUE/{task_key} splits to {base_dir}.")
+
+
 def load_glue_fewshot(task_name: str, config: Dict[str, object]):
     task_key = task_name.lower()
     if task_key not in GLUE_TASKS:
         raise ValueError(f"Unsupported GLUE task: {task_name}")
     meta = GLUE_TASKS[task_key]
     base_dir = Path(config.get("glue_data_dir", "data/glue")) / task_key
+    _ensure_glue_data(task_key, meta, base_dir, bool(config.get("allow_dataset_download", False)))
     train_path = base_dir / meta["train_file"]
     val_path = base_dir / meta["validation_file"]
     test_path = base_dir / meta["test_file"]

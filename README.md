@@ -107,7 +107,7 @@ python hsokv.py --benchmark glue --glue-task sst2 \
     --agent-steps 25 --num-managers 2 --visualize
 ```
 
-- First run downloads SST-2 into `data/glue/sst2/`. Repeat for MNLI by setting `--glue-task mnli`.
+- First run (`--allow-download`) fetches SST-2 via [Hugging Face Datasets](https://huggingface.co/docs/datasets), writing TSVs to `data/glue/sst2/`. Install with `pip install datasets` if missing. Repeat for MNLI by setting `--glue-task mnli`.
 - Outputs include `results/glue_*` plots and `results/benchmark_table.md`.
 - Use `--save-pretrained outputs/hsokv_glue` to persist checkpoints.
 
@@ -263,4 +263,3 @@ Run each command; inspect `results/` and `outputs/` for plots, tables, and check
 ---
 
 Questions or issues? Open a GitHub issue or reach out via the project discussion board. Happy experimenting!
-
