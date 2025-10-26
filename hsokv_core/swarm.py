@@ -44,14 +44,14 @@ class Agent:
         self.config = config
         self.model_factory = model_factory
         self.device = device
-        strategies = ["sgd", "adam", "rmsprop", "random_search"]
-        self.strategy = strategy or random.choice(strategies)
-        self.learning_rate = random.uniform(*config["learning_rate_range"])
-        self.kv_retrieval_k = random.randint(*config["kv_top_k_range"])
+        self._strategies = list(config.get("agent_strategies", ["sgd", "adam", "rmsprop", "random_search"]))
+        self._rng = random.Random(config.get("seed", 42) + agent_id)
+        self.strategy = strategy or self._rng.choice(self._strategies)
+        self.learning_rate = self._rng.uniform(*config["learning_rate_range"])
+        self.kv_retrieval_k = self._rng.randint(*config["kv_top_k_range"])
         self.steps = config["agent_steps"]
         self.encoded_cache: Dict[str, torch.Tensor] = {}
         self.surprise_writer = SurpriseBasedWriter(config)
-        self._rng = random.Random(config.get("seed", 42) + agent_id)
 
     def adjust_strategy(self, strategy: str, learning_rate: Optional[float] = None, kv_k: Optional[int] = None) -> None:
         self.strategy = strategy
@@ -59,6 +59,12 @@ class Agent:
             self.learning_rate = learning_rate
         if kv_k is not None:
             self.kv_retrieval_k = kv_k
+
+    def reseed(self) -> None:
+        self.strategy = self._rng.choice(self._strategies)
+        self.learning_rate = self._rng.uniform(*self.config["learning_rate_range"])
+        self.kv_retrieval_k = self._rng.randint(*self.config["kv_top_k_range"])
+        self.encoded_cache.clear()
 
     def train_episode(self, task_data: Dict[str, object]) -> Dict[str, object]:
         model: TransformerWithKV = self.model_factory()
