@@ -115,13 +115,13 @@ class KeyValueMemory:
                 confidence = float(metadata["confidence"])
                 similarity = float(sims[j].item())
 
-                # FIXED: Boost first-exposure words in their first 5 retrievals
+                # FIXED: Boost first-exposure words in their first 20 retrievals (extended from 5 for longer training)
                 is_first_exposure = metadata.get("is_first_exposure", False)
                 retrieval_count = metadata.get("retrieval_count", 0)
 
-                if is_first_exposure and retrieval_count < 5:
-                    # Boost new words: 1.5× → 1.0× over first 5 retrievals
-                    confidence_boost = 1.5 - (0.1 * retrieval_count)
+                if is_first_exposure and retrieval_count < 20:
+                    # Boost new words: 1.5× → 1.0× over first 20 retrievals (slower decay)
+                    confidence_boost = 1.5 - (0.025 * retrieval_count)
                     effective_confidence = min(confidence * confidence_boost, 1.0)
                 else:
                     effective_confidence = confidence
@@ -137,8 +137,8 @@ class KeyValueMemory:
                 # Update retrieval count
                 self.metadata[entry_id]["retrieval_count"] += 1
 
-                # Remove first_exposure flag after 5 retrievals
-                if is_first_exposure and retrieval_count >= 5:
+                # Remove first_exposure flag after 20 retrievals
+                if is_first_exposure and retrieval_count >= 20:
                     self.metadata[entry_id]["is_first_exposure"] = False
             if not weights or sum(weights) == 0:
                 weights = [1.0]
