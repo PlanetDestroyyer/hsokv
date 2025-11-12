@@ -24,7 +24,10 @@ class KeyValueMemory:
         return self.keys.size(0)
 
     def _normalize(self, tensor: torch.Tensor) -> torch.Tensor:
-        return F.normalize(tensor, p=2, dim=-1)
+        """L2 normalization with numerical stability across hardware."""
+        # FIXED: Add epsilon for stability across different GPUs
+        norm = torch.sqrt(torch.sum(tensor ** 2, dim=-1, keepdim=True) + 1e-12)
+        return tensor / norm
 
     def write(self, key_embedding: torch.Tensor, value_dict: Dict[str, object], metadata: Dict[str, object]) -> int:
         key_embed = self._normalize(key_embedding.detach().to(self.device))
@@ -108,10 +111,35 @@ class KeyValueMemory:
             vectors: List[torch.Tensor] = []
             for j, idx in enumerate(indices):
                 entry_id = idx.item()
-                weight = max(float(self.metadata[entry_id]["confidence"]), 1e-4) * float(sims[j].item())
+                metadata = self.metadata[entry_id]
+                confidence = float(metadata["confidence"])
+                similarity = float(sims[j].item())
+
+                # FIXED: Boost first-exposure words in their first 5 retrievals
+                is_first_exposure = metadata.get("is_first_exposure", False)
+                retrieval_count = metadata.get("retrieval_count", 0)
+
+                if is_first_exposure and retrieval_count < 5:
+                    # Boost new words: 1.5× → 1.0× over first 5 retrievals
+                    confidence_boost = 1.5 - (0.1 * retrieval_count)
+                    effective_confidence = min(confidence * confidence_boost, 1.0)
+                else:
+                    effective_confidence = confidence
+
+                # Skip very low similarity matches
+                if similarity < 0.3:
+                    continue
+
+                weight = max(effective_confidence, 1e-4) * similarity
                 weights.append(weight)
                 vectors.append(self.values[entry_id]["value_vector"])
+
+                # Update retrieval count
                 self.metadata[entry_id]["retrieval_count"] += 1
+
+                # Remove first_exposure flag after 5 retrievals
+                if is_first_exposure and retrieval_count >= 5:
+                    self.metadata[entry_id]["is_first_exposure"] = False
             if not weights or sum(weights) == 0:
                 weights = [1.0]
                 vectors = [torch.zeros_like(keys[0])]

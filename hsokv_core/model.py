@@ -61,7 +61,9 @@ class TransformerWithKV(nn.Module):
         self._context_module: Optional[ContextualRetrievalModule] = None
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, top_k: int = 5) -> Tuple[torch.Tensor, Dict[str, object]]:
-        embeddings = self.embedding(input_ids) * math.sqrt(self.config["d_model"])
+        # FIXED: Ensure float32 precision for hardware reproducibility
+        embeddings = self.embedding(input_ids) * math.sqrt(float(self.config["d_model"]))
+        embeddings = embeddings.float()  # Force float32
         embeddings = self.pos_encoder(embeddings)
         hidden = self.transformer(embeddings)
         hidden = self.layer_norm(hidden)
