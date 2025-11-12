@@ -179,17 +179,53 @@ class ConsolidationModule:
 
         avg_loss = float(np.mean(losses)) if losses else 0.0
 
-        self._remove_memories(candidate_indices)
-        metrics = ConsolidationMetrics(
-            consolidated_count=len(candidate_indices),
-            memory_freed=len(candidate_indices),
-            avg_loss=avg_loss,
-        )
-        logger.info(
-            "Consolidated %d memories (avg loss=%.4f).",
-            metrics.consolidated_count,
-            metrics.avg_loss,
-        )
+        # FIXED: Validate consolidation before deleting memories
+        validation_correct = 0
+        validation_total = 0
+        min_accuracy_threshold = 0.75  # Must retain 75% accuracy
+
+        with torch.no_grad():
+            # Test on up to 50 samples from the consolidation dataset
+            test_size = min(len(dataset), 50)
+            for sample_idx in range(test_size):
+                sample = dataset[sample_idx]
+                input_ids = sample["input_ids"].unsqueeze(0).to(self.device)
+                attention_mask = sample["attention_mask"].unsqueeze(0).to(self.device)
+                label = sample["labels"].unsqueeze(0).to(self.device)
+
+                logits, _ = self.model(input_ids, attention_mask, top_k=5)
+                pred = logits.argmax(dim=-1)
+                validation_correct += int((pred == label).sum().item())
+                validation_total += 1
+
+        validation_accuracy = validation_correct / max(validation_total, 1)
+
+        if validation_accuracy >= min_accuracy_threshold:
+            # Consolidation successful - safe to delete
+            self._remove_memories(candidate_indices)
+            logger.info(
+                "Consolidation validated (acc=%.2f). Removed %d memories.",
+                validation_accuracy,
+                len(candidate_indices),
+            )
+            metrics = ConsolidationMetrics(
+                consolidated_count=len(candidate_indices),
+                memory_freed=len(candidate_indices),
+                avg_loss=avg_loss,
+            )
+        else:
+            # Consolidation FAILED - keep memories
+            logger.warning(
+                "Consolidation FAILED (acc=%.2f < %.2f threshold). Keeping memories in KV store.",
+                validation_accuracy,
+                min_accuracy_threshold,
+            )
+            metrics = ConsolidationMetrics(
+                consolidated_count=0,  # Didn't actually consolidate
+                memory_freed=0,
+                avg_loss=avg_loss,
+            )
+
         return metrics
 
     def _remove_memories(self, indices: Sequence[int]) -> None:

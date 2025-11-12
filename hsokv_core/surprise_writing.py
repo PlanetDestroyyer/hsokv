@@ -17,9 +17,11 @@ class SurpriseBasedWriter:
     def __init__(self, config: Dict[str, object]) -> None:
         self.config = config
         self.use_surprise_writing = bool(config.get("use_surprise_writing", True))
-        self.surprise_threshold = float(config.get("surprise_threshold", 0.5))
+        self.surprise_threshold = float(config.get("surprise_threshold", 0.3))  # Lowered for better recall
         self.novelty_threshold = float(config.get("novelty_threshold", 0.7))
         self.min_confidence = float(config.get("surprise_min_confidence", 0.05))
+        self.first_exposure_threshold = float(config.get("first_exposure_threshold", 0.15))  # NEW
+        self.first_exposure_boost = float(config.get("first_exposure_boost", 0.25))  # NEW
         self.metrics = {
             "surprise_scores": [],  # type: List[float]
             "novelty_scores": [],  # type: List[float]
@@ -115,15 +117,28 @@ class SurpriseBasedWriter:
                 continue
 
             should_store_flag = bool(should_store.item() if torch.is_tensor(should_store) else should_store)
-            if rare_word not in existing_words:
-                should_store_flag = True
+            is_first_exposure = rare_word not in existing_words
+
+            # FIXED: First-exposure words get special treatment
+            if is_first_exposure:
+                # Always write if highly novel OR surprise exceeds first-exposure threshold
+                if novelty_scores[idx] > 0.85 or surprise_scores[idx] > self.first_exposure_threshold:
+                    should_store_flag = True
+                    if novelty_scores[idx] > 0.85:
+                        LOGGER.debug("[FIRST EXPOSURE] Writing '%s' (novelty=%.3f)", rare_word, novelty_scores[idx])
 
             if not should_store_flag:
                 skips += 1
                 continue
 
             value_vector = self._get_value_vector(model, cache, rare_word, definition, usage)
-            confidence = float(torch.clamp(1.0 - surprise_scores[idx], self.min_confidence, 1.0).item())
+
+            # FIXED: Boost initial confidence for first-exposure words
+            base_confidence = float(torch.clamp(1.0 - surprise_scores[idx], self.min_confidence, 1.0).item())
+            if is_first_exposure:
+                confidence = min(base_confidence + self.first_exposure_boost, 1.0)
+            else:
+                confidence = base_confidence
             metadata = {
                 "confidence": confidence,
                 "retrieval_count": 0,
@@ -132,6 +147,7 @@ class SurpriseBasedWriter:
                 "created_at": float(self.write_step),
                 "domain": "general",
                 "emotion": 0.5,
+                "is_first_exposure": is_first_exposure,  # NEW: Track for retrieval boosting
             }
             try:
                 memory.write(

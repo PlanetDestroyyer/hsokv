@@ -88,9 +88,11 @@ CONFIG: Dict[str, object] = {
     "context_importance_scale": 0.5,
     "context_domains": ["general", "medical", "legal", "finance", "technology", "culinary"],
     "use_surprise_writing": True,
-    "surprise_threshold": 0.5,
+    "surprise_threshold": 0.3,  # FIXED: Lowered from 0.5 for better one-shot recall
     "novelty_threshold": 0.7,
     "surprise_min_confidence": 0.05,
+    "first_exposure_threshold": 0.15,  # NEW: Aggressive threshold for first-time words
+    "first_exposure_boost": 0.25,  # NEW: Initial confidence boost for novel words
 }
 
 PRESET_CONFIGS: Dict[str, Dict[str, object]] = {
