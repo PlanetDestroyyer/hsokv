@@ -182,7 +182,7 @@ class ConsolidationModule:
         # FIXED: Validate consolidation before deleting memories
         validation_correct = 0
         validation_total = 0
-        min_accuracy_threshold = 0.75  # Must retain 75% accuracy
+        min_accuracy_threshold = 0.85  # FIXED: Raised from 0.75 to 0.85 for safer consolidation during extended training
 
         with torch.no_grad():
             # Test on up to 50 samples from the consolidation dataset
