@@ -81,7 +81,7 @@ CONFIG: Dict[str, object] = {
     "preset": "demo",
     "lm_corpus_preset": "medium",
     "lm_min_samples": 50,
-    "use_context_retrieval": True,
+    "use_context_retrieval": False,  # FIXED: Disabled - adds random noise to retrieval
     "context_recency_decay": 0.95,
     "context_domain_boost": 1.5,
     "context_emotion_scale": 0.3,

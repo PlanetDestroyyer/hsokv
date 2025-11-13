@@ -84,8 +84,10 @@ class KeyValueMemory:
             single = True
         else:
             query = query_embedding
-        query = self._normalize(query.to(self.device))
+        # FIXED: Don't normalize query - preserves signal strength (magnitude information)
+        query = query.to(self.device)
         keys = self.keys
+        # Use raw dot product instead of cosine similarity
         similarities = torch.clamp(F.linear(query, keys), min=0.0)
         if context_modulator is not None:
             try:
@@ -107,45 +109,23 @@ class KeyValueMemory:
         for i in range(query.size(0)):
             indices = topk.indices[i]
             sims = topk.values[i]
-            weights: List[float] = []
-            vectors: List[torch.Tensor] = []
-            for j, idx in enumerate(indices):
-                entry_id = idx.item()
-                metadata = self.metadata[entry_id]
-                confidence = float(metadata["confidence"])
-                similarity = float(sims[j].item())
 
-                # FIXED: Boost first-exposure words in their first 20 retrievals (extended from 5 for longer training)
-                is_first_exposure = metadata.get("is_first_exposure", False)
-                retrieval_count = metadata.get("retrieval_count", 0)
+            # FIXED: Use top-1 retrieval (best match only) - no averaging!
+            # Get the best match (first in topk)
+            best_idx = indices[0].item()
+            best_sim = float(sims[0].item())
 
-                if is_first_exposure and retrieval_count < 20:
-                    # Boost new words: 1.5× → 1.0× over first 20 retrievals (slower decay)
-                    confidence_boost = 1.5 - (0.025 * retrieval_count)
-                    effective_confidence = min(confidence * confidence_boost, 1.0)
-                else:
-                    effective_confidence = confidence
+            # Update retrieval count for best match
+            self.metadata[best_idx]["retrieval_count"] += 1
 
-                # Skip very low similarity matches
-                if similarity < 0.3:
-                    continue
+            # Skip if similarity too low
+            if best_sim < 0.3:
+                # Use zero vector if no good match
+                aggregated = torch.zeros_like(keys[0])
+            else:
+                # Return the best match value vector directly
+                aggregated = self.values[best_idx]["value_vector"]
 
-                weight = max(effective_confidence, 1e-4) * similarity
-                weights.append(weight)
-                vectors.append(self.values[entry_id]["value_vector"])
-
-                # Update retrieval count
-                self.metadata[entry_id]["retrieval_count"] += 1
-
-                # Remove first_exposure flag after 20 retrievals
-                if is_first_exposure and retrieval_count >= 20:
-                    self.metadata[entry_id]["is_first_exposure"] = False
-            if not weights or sum(weights) == 0:
-                weights = [1.0]
-                vectors = [torch.zeros_like(keys[0])]
-            weight_tensor = torch.tensor(weights, dtype=torch.float32, device=self.device)
-            stacked_vectors = torch.stack(vectors)
-            aggregated = (weight_tensor.unsqueeze(-1) * stacked_vectors).sum(dim=0) / (weight_tensor.sum() + 1e-8)
             outputs.append(aggregated)
             hit_counts.append(len(indices))
             sim_scores.append(float(sims.mean().item()) if sims.numel() > 0 else 0.0)
