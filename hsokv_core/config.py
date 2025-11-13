@@ -36,7 +36,7 @@ CONFIG: Dict[str, object] = {
     "use_forgetting": True,  # Re-enabled: needed to prevent memory overflow
     "forgetting_interval": 10,
     "forgetting_similarity_threshold": 0.8,
-    "forgetting_utility_threshold": 0.10,  # FIXED: Lowered from 0.25 to preserve memories longer during extended training
+    "forgetting_utility_threshold": 0.05,  # FIXED: Lowered to 0.05 to delete less aggressively (preserve more memories)
     "results_dir": "results",
     "retention_distractor_factor": 5,
     "baseline_epochs": 6,

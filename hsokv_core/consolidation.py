@@ -74,7 +74,7 @@ class ConsolidationModule:
         """Return indices of KV entries that qualify for consolidation."""
         indices: List[int] = []
         threshold_conf = 0.85
-        threshold_retrieval = 10
+        threshold_retrieval = 5  # FIXED: Lowered from 10 to 5 (consolidate after 5 successful uses)
         threshold_success = 0.7
         for idx, meta in enumerate(self.memory.metadata):
             confidence = float(meta.get("confidence", 0.0))
