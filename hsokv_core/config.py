@@ -87,7 +87,7 @@ CONFIG: Dict[str, object] = {
     "context_emotion_scale": 0.3,
     "context_importance_scale": 0.5,
     "context_domains": ["general", "medical", "legal", "finance", "technology", "culinary"],
-    "use_surprise_writing": True,
+    "use_surprise_writing": False,  # DISABLED: Surprise filtering was preventing one-shot words from being stored
     "surprise_threshold": 0.3,  # FIXED: Lowered from 0.5 for better one-shot recall
     "novelty_threshold": 0.7,
     "surprise_min_confidence": 0.05,
