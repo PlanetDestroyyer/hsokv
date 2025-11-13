@@ -87,12 +87,17 @@ CONFIG: Dict[str, object] = {
     "context_emotion_scale": 0.3,
     "context_importance_scale": 0.5,
     "context_domains": ["general", "medical", "legal", "finance", "technology", "culinary"],
-    "use_surprise_writing": False,  # DISABLED: Surprise filtering was preventing one-shot words from being stored
-    "surprise_threshold": 0.3,  # FIXED: Lowered from 0.5 for better one-shot recall
-    "novelty_threshold": 0.7,
-    "surprise_min_confidence": 0.05,
-    "first_exposure_threshold": 0.15,  # NEW: Aggressive threshold for first-time words
-    "first_exposure_boost": 0.25,  # NEW: Initial confidence boost for novel words
+    "use_surprise_writing": False,  # REMOVED: Surprise-based writing module deleted (was preventing one-shot learning)
+    # 3-STAGE MEMORY LIFECYCLE (Human-inspired learning: "overwhelming" example)
+    "memory_learning_phase_duration": 5,  # STAGE 1: First 5 retrievals - pure recall, maximum protection
+    "memory_reinforcement_phase_duration": 20,  # STAGE 2: Next 15 retrievals - boosted, high protection
+    "min_uses_before_consolidation": 5,  # Require 5 successful uses before permanent storage
+    "min_success_rate_for_consolidation": 0.8,  # Require 80% correct usage
+    "consolidation_confidence_threshold": 0.85,  # Require 85% confidence
+    "protect_during_learning": True,  # Never delete memories in LEARNING stage
+    "protect_during_reinforcement": True,  # Never delete memories in REINFORCEMENT stage
+    "use_pure_recall_for_new_words": True,  # No averaging during learning - return exact best match
+    "use_stage_aware_retrieval": True,  # Enable 3-stage retrieval strategy
 }
 
 PRESET_CONFIGS: Dict[str, Dict[str, object]] = {

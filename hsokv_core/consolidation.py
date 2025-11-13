@@ -71,21 +71,63 @@ class ConsolidationModule:
     # Candidate Identification
     # ----------------------------
     def identify_candidates(self) -> List[int]:
-        """Return indices of KV entries that qualify for consolidation."""
+        """
+        Return indices of KV entries that qualify for consolidation.
+
+        Respects 3-stage memory lifecycle (human-inspired "overwhelming" example):
+        - LEARNING: NEVER consolidate (still learning, maximum protection)
+        - REINFORCEMENT: NEVER consolidate (reinforcing through use, high protection)
+        - MATURE: Can consolidate if proven stable through repeated successful use
+        """
         indices: List[int] = []
-        threshold_conf = 0.85
-        threshold_retrieval = 10
-        threshold_success = 0.7
+
+        # Get thresholds from config (human-inspired requirements)
+        threshold_conf = float(self.config.get("consolidation_confidence_threshold", 0.85))
+        threshold_retrieval = int(self.config.get("min_uses_before_consolidation", 5))
+        threshold_success = float(self.config.get("min_success_rate_for_consolidation", 0.8))
+
+        skipped_learning = 0
+        skipped_reinforcement = 0
+
         for idx, meta in enumerate(self.memory.metadata):
             confidence = float(meta.get("confidence", 0.0))
             retrieval_count = int(meta.get("retrieval_count", 0))
             success_rate = float(meta.get("success_rate", 0.0))
+
+            # CHECK MEMORY STAGE: Only consolidate MATURE memories
+            stage = self.memory.get_memory_stage(idx)
+
+            if stage == "LEARNING":
+                # NEVER consolidate during LEARNING (like Day 0-1 with "overwhelming")
+                skipped_learning += 1
+                logger.debug(f"Skipping LEARNING stage memory at index {idx} from consolidation")
+                continue
+
+            elif stage == "REINFORCEMENT":
+                # NEVER consolidate during REINFORCEMENT (like Days 2-14 with "overwhelming")
+                skipped_reinforcement += 1
+                logger.debug(f"Skipping REINFORCEMENT stage memory at index {idx} from consolidation")
+                continue
+
+            # MATURE STAGE: Check if proven stable for consolidation (like Week 3+ with "overwhelming")
             if (
                 confidence >= threshold_conf
                 and retrieval_count >= threshold_retrieval
                 and success_rate >= threshold_success
             ):
+                word = self.memory.values[idx].get("word", "unknown")
+                logger.info(
+                    f"Consolidation candidate '{word}': stage={stage}, confidence={confidence:.2f}, "
+                    f"uses={retrieval_count}, success={success_rate:.2f}"
+                )
                 indices.append(idx)
+
+        if skipped_learning > 0 or skipped_reinforcement > 0:
+            logger.info(
+                f"Protected {skipped_learning} LEARNING + {skipped_reinforcement} REINFORCEMENT "
+                f"stage memories from premature consolidation"
+            )
+
         logger.debug("Consolidation candidates identified: %s", indices)
         return indices
 

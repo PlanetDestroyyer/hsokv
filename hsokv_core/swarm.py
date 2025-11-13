@@ -16,7 +16,6 @@ import torch.nn as nn
 from .config import CONFIG
 from .memory import KeyValueMemory
 from .model import TransformerWithKV
-from .surprise_writing import SurpriseBasedWriter
 from .forgetting import ForgettingModule
 from .utils import compute_swarm_diversity, compute_usage_correctness, move_batch_to_device
 
@@ -51,7 +50,6 @@ class Agent:
         self.kv_retrieval_k = self._rng.randint(*config["kv_top_k_range"])
         self.steps = config["agent_steps"]
         self.encoded_cache: Dict[str, torch.Tensor] = {}
-        self.surprise_writer = SurpriseBasedWriter(config)
 
     def adjust_strategy(self, strategy: str, learning_rate: Optional[float] = None, kv_k: Optional[int] = None) -> None:
         self.strategy = strategy
@@ -164,34 +162,9 @@ class Agent:
         pooled: torch.Tensor,
         logits: torch.Tensor,
     ) -> None:
-        with torch.no_grad():
-            try:
-                stats = self.surprise_writer.selective_write(
-                    model=model,
-                    memory=model.kv_memory,
-                    batch=batch,
-                    pooled=pooled,
-                    logits=logits,
-                    cache=self.encoded_cache,
-                )
-            except Exception as exc:
-                LOGGER.warning("Surprise-based writing failed; falling back to legacy path: %s", exc)
-                stats = self.surprise_writer._legacy_write(  # pylint: disable=protected-access
-                    model=model,
-                    memory=model.kv_memory,
-                    batch=batch,
-                    pooled=pooled,
-                    cache=self.encoded_cache,
-                )
-            LOGGER.debug(
-                "Agent %s memory update | writes=%s skips=%s",
-                self.agent_id,
-                stats.get("writes"),
-                stats.get("skips"),
-            )
-            telemetry = self.config.setdefault("_telemetry", {})
-            telemetry["memory_writes"] = telemetry.get("memory_writes", 0) + stats.get("writes", 0)
-            telemetry["memory_skips"] = telemetry.get("memory_skips", 0) + stats.get("skips", 0)
+        # NOTE: Surprise-based selective writing has been removed (was disabled: use_surprise_writing=False)
+        # Memory updates now handled through standard training mechanisms
+        pass
 
 
 class Manager:

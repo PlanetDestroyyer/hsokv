@@ -18,7 +18,6 @@ from .model import BaselineTransformer, TransformerWithKV
 from .metrics import estimate_model_flops, latex_table_from_metrics, summarize_history
 from .context_retrieval import ContextualRetrievalModule
 from .consolidation import ConsolidationModule
-from .surprise_writing import SurpriseBasedWriter
 from .forgetting import ForgettingModule
 from .visualization import plot_consolidation_timeline, plot_memory_statistics, generate_report as generate_visualization_report
 from .swarm import Agent, Manager, Supervisor, compute_swarm_diversity
@@ -47,7 +46,6 @@ __all__ = [
     "ConsolidationModule",
     "ForgettingModule",
     "ContextualRetrievalModule",
-    "SurpriseBasedWriter",
     "plot_consolidation_timeline",
     "plot_memory_statistics",
     "generate_visualization_report",
