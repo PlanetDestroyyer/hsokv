@@ -2,7 +2,12 @@ import argparse
 import os
 from typing import Dict, List, Optional
 
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
+    print("[WARN] matplotlib not available, visualization disabled")
 import numpy as np
 import torch
 
@@ -86,6 +91,8 @@ def format_benchmark_table(records: Dict[str, object]) -> str:
 
 
 def create_plots(results: Dict[str, object], config: Dict[str, object]) -> None:
+    if not HAS_MATPLOTLIB:
+        return
     os.makedirs(config["results_dir"], exist_ok=True)
     hsokv_history = results["hsokv"]["history"]
     baseline_standard = results["baseline_standard"]
@@ -139,6 +146,8 @@ def create_ablation_artifacts(
     baseline_kv: Dict[str, object],
 ) -> None:
     if not records:
+        return
+    if not HAS_MATPLOTLIB:
         return
     os.makedirs(config["results_dir"], exist_ok=True)
     variants = [record["variant"] for record in records]
@@ -215,6 +224,8 @@ def create_benchmark_artifacts(
 ) -> None:
     if not benchmark_output:
         return
+    if not HAS_MATPLOTLIB:
+        return
     os.makedirs(config["results_dir"], exist_ok=True)
     variants = list(benchmark_output.keys())
     accuracies = [benchmark_output[key].accuracy for key in variants]
@@ -250,6 +261,8 @@ def create_distributed_artifacts(
     config: Dict[str, object],
 ) -> None:
     if not distributed_metrics:
+        return
+    if not HAS_MATPLOTLIB:
         return
     os.makedirs(config["results_dir"], exist_ok=True)
     nodes = distributed_metrics["nodes"]

@@ -275,6 +275,8 @@ class Supervisor:
         self.best_kv_state = deepcopy(base_model.kv_memory.get_state()) if len(base_model.kv_memory) else None
         if kv_state:
             self.best_kv_state = deepcopy(kv_state)
+        # DEBUG: Check forgetting flag value
+        print(f"[DEBUG] use_forgetting = {config.get('use_forgetting', True)}")
         if config.get("use_forgetting", True):
             self.forgetting_module = ForgettingModule(
                 base_model.kv_memory,

@@ -298,6 +298,8 @@ def train_hsokv(
                 "retention": f"{best_metrics['retention']:.2f}",
             }
         )
+        # DEBUG: Check consolidation flag value
+        print(f"[DEBUG] use_consolidation = {config.get('use_consolidation', True)}")
         if config.get("use_consolidation", True) and (iteration + 1) % 5 == 0:
             best_model = supervisor.get_best_model()
             consolidator = ConsolidationModule(
