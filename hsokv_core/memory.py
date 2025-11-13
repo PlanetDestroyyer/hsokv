@@ -23,6 +23,47 @@ class KeyValueMemory:
     def __len__(self) -> int:
         return self.keys.size(0)
 
+    def get_memory_stage(self, entry_id: int) -> str:
+        """
+        Determine which learning stage this memory is in.
+
+        Based on human learning (e.g., learning "overwhelming" from a movie):
+        - LEARNING: First 5 uses - pure recall, maximum protection
+        - REINFORCEMENT: Next 15 uses - boosted confidence, high protection
+        - MATURE: After 20 uses - standard retrieval, can be consolidated/forgotten
+
+        Args:
+            entry_id: Index of memory entry
+
+        Returns:
+            "LEARNING" | "REINFORCEMENT" | "MATURE"
+        """
+        if entry_id < 0 or entry_id >= len(self.metadata):
+            return "MATURE"
+
+        meta = self.metadata[entry_id]
+
+        # Non-first-exposure memories are always MATURE
+        if not meta.get("is_first_exposure", False):
+            return "MATURE"
+
+        retrieval_count = meta.get("retrieval_count", 0)
+
+        # STAGE 1: LEARNING (like Day 0-1 with "overwhelming")
+        # Pure recall, no averaging, maximum protection
+        if retrieval_count < CONFIG.get("memory_learning_phase_duration", 5):
+            return "LEARNING"
+
+        # STAGE 2: REINFORCEMENT (like Days 2-14 with "overwhelming")
+        # Boosted confidence, high protection, gradual blending
+        elif retrieval_count < CONFIG.get("memory_reinforcement_phase_duration", 20):
+            return "REINFORCEMENT"
+
+        # STAGE 3: MATURE (like Week 3+ with "overwhelming")
+        # Standard retrieval, can be consolidated or forgotten if unused
+        else:
+            return "MATURE"
+
     def _normalize(self, tensor: torch.Tensor) -> torch.Tensor:
         """L2 normalization with numerical stability across hardware."""
         # FIXED: Add epsilon for stability across different GPUs
@@ -104,9 +145,41 @@ class KeyValueMemory:
         hit_counts = []
         sim_scores = []
         topk_indices: List[List[int]] = []
+
+        # Check if stage-aware retrieval is enabled
+        use_stage_aware = CONFIG.get("use_stage_aware_retrieval", True)
+        use_pure_recall = CONFIG.get("use_pure_recall_for_new_words", True)
+
         for i in range(query.size(0)):
             indices = topk.indices[i]
             sims = topk.values[i]
+
+            # STAGE-AWARE RETRIEVAL: Check if best match is in LEARNING stage
+            best_idx = indices[0].item()
+            best_stage = self.get_memory_stage(best_idx) if use_stage_aware else "MATURE"
+
+            # LEARNING STAGE: Pure recall (like recalling "overwhelming" on Day 1)
+            # Return ONLY the best match, no averaging
+            if best_stage == "LEARNING" and use_pure_recall:
+                best_meta = self.metadata[best_idx]
+                best_value = self.values[best_idx]["value_vector"]
+                best_sim = float(sims[0].item())
+
+                # Update retrieval count
+                self.metadata[best_idx]["retrieval_count"] += 1
+
+                # Check if should graduate from LEARNING stage
+                if self.metadata[best_idx]["retrieval_count"] >= CONFIG.get("memory_learning_phase_duration", 5):
+                    LOGGER.info(f"Memory '{self.values[best_idx]['word']}' graduated from LEARNING to REINFORCEMENT stage")
+
+                # Return pure best match
+                outputs.append(best_value)
+                hit_counts.append(1)
+                sim_scores.append(best_sim)
+                topk_indices.append([best_idx])
+                continue  # Skip averaging logic
+
+            # REINFORCEMENT or MATURE STAGE: Use weighted averaging
             weights: List[float] = []
             vectors: List[torch.Tensor] = []
             for j, idx in enumerate(indices):
@@ -115,15 +188,26 @@ class KeyValueMemory:
                 confidence = float(metadata["confidence"])
                 similarity = float(sims[j].item())
 
-                # FIXED: Boost first-exposure words in their first 20 retrievals (extended from 5 for longer training)
-                is_first_exposure = metadata.get("is_first_exposure", False)
+                # STAGE-AWARE CONFIDENCE BOOSTING
+                # Get current stage for this memory
+                current_stage = self.get_memory_stage(entry_id)
                 retrieval_count = metadata.get("retrieval_count", 0)
 
-                if is_first_exposure and retrieval_count < 20:
-                    # Boost new words: 1.5× → 1.0× over first 20 retrievals (slower decay)
-                    confidence_boost = 1.5 - (0.025 * retrieval_count)
+                if current_stage == "REINFORCEMENT":
+                    # REINFORCEMENT STAGE (like Days 2-14 with "overwhelming")
+                    # Strong boost that gradually decays
+                    reinforcement_duration = CONFIG.get("memory_reinforcement_phase_duration", 20)
+                    learning_duration = CONFIG.get("memory_learning_phase_duration", 5)
+                    reinforcement_progress = retrieval_count - learning_duration
+                    reinforcement_window = reinforcement_duration - learning_duration
+                    confidence_boost = 1.5 - (0.025 * reinforcement_progress)
                     effective_confidence = min(confidence * confidence_boost, 1.0)
+                elif current_stage == "LEARNING":
+                    # LEARNING STAGE - should not reach here due to pure recall above
+                    # But if it does, apply maximum boost
+                    effective_confidence = min(confidence * 1.5, 1.0)
                 else:
+                    # MATURE STAGE - standard confidence
                     effective_confidence = confidence
 
                 # Skip very low similarity matches
@@ -137,9 +221,11 @@ class KeyValueMemory:
                 # Update retrieval count
                 self.metadata[entry_id]["retrieval_count"] += 1
 
-                # Remove first_exposure flag after 20 retrievals
-                if is_first_exposure and retrieval_count >= 20:
+                # Graduate from first_exposure after completing REINFORCEMENT stage
+                stage_after_update = self.get_memory_stage(entry_id)
+                if stage_after_update == "MATURE" and metadata.get("is_first_exposure", False):
                     self.metadata[entry_id]["is_first_exposure"] = False
+                    LOGGER.info(f"Memory '{self.values[entry_id]['word']}' graduated to MATURE stage")
             if not weights or sum(weights) == 0:
                 weights = [1.0]
                 vectors = [torch.zeros_like(keys[0])]

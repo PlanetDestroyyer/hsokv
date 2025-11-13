@@ -10,6 +10,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import torch
 import torch.nn.functional as F
 
+from .config import CONFIG
 from .memory import KeyValueMemory
 
 LOGGER = logging.getLogger(__name__)
@@ -99,16 +100,64 @@ class ForgettingModule:
         return (iteration - self._last_iteration_run) >= self.trigger_interval
 
     def forget(self, iteration: int, current_step: float) -> ForgettingReport:
-        """Perform forgetting and return a report."""
+        """
+        Perform forgetting and return a report.
+
+        Respects 3-stage memory lifecycle (human-inspired "overwhelming" example):
+        - LEARNING stage: NEVER forget (maximum protection)
+        - REINFORCEMENT stage: NEVER forget (high protection)
+        - MATURE stage: Can forget if low utility
+        """
         if len(self.memory) == 0:
             return ForgettingReport(0, 0, [])
         utilities = self.compute_memory_utility(current_step)
         if not utilities:
             return ForgettingReport(0, len(self.memory), [])
         threshold = self.utility_threshold
-        low_utility_indices = [idx for idx, score in enumerate(utilities) if score < threshold]
+
+        # Check protection settings
+        protect_learning = CONFIG.get("protect_during_learning", True)
+        protect_reinforcement = CONFIG.get("protect_during_reinforcement", True)
+
+        # Identify low utility memories, but RESPECT STAGE PROTECTION
+        low_utility_indices = []
+        protected_count = 0
+        for idx, score in enumerate(utilities):
+            if score < threshold:
+                # Check memory stage before marking for deletion
+                stage = self.memory.get_memory_stage(idx)
+
+                # LEARNING STAGE: Maximum protection (like Day 0-1 with "overwhelming")
+                if stage == "LEARNING" and protect_learning:
+                    protected_count += 1
+                    LOGGER.debug(f"Protecting LEARNING stage memory at index {idx} from forgetting")
+                    continue
+
+                # REINFORCEMENT STAGE: High protection (like Days 2-14 with "overwhelming")
+                elif stage == "REINFORCEMENT" and protect_reinforcement:
+                    protected_count += 1
+                    LOGGER.debug(f"Protecting REINFORCEMENT stage memory at index {idx} from forgetting")
+                    continue
+
+                # MATURE STAGE: Can be forgotten if low utility (like Week 3+ if unused)
+                else:
+                    low_utility_indices.append(idx)
+
+        if protected_count > 0:
+            LOGGER.info(f"Protected {protected_count} memories in LEARNING/REINFORCEMENT stages from forgetting")
+
         interfering_indices = self.identify_interfering_memories()
-        to_remove = sorted(set(low_utility_indices + interfering_indices))
+
+        # Also protect interfering memories if they're in protected stages
+        filtered_interfering = []
+        for idx in interfering_indices:
+            stage = self.memory.get_memory_stage(idx)
+            if (stage == "LEARNING" and protect_learning) or (stage == "REINFORCEMENT" and protect_reinforcement):
+                LOGGER.debug(f"Protecting {stage} stage memory at index {idx} from interference pruning")
+                continue
+            filtered_interfering.append(idx)
+
+        to_remove = sorted(set(low_utility_indices + filtered_interfering))
         if not to_remove:
             LOGGER.debug("No memories selected for forgetting at iteration %s", iteration)
             return ForgettingReport(0, len(self.memory), utilities)
