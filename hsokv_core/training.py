@@ -14,7 +14,6 @@ from .consolidation import ConsolidationModule
 from .data import RARE_WORD_SPECS, prepare_dataloaders
 from .metrics import estimate_model_flops, summarize_history
 from .model import BaselineTransformer, TransformerWithKV
-from .swarm import Supervisor
 from .utils import (
     compute_convergence_step,
     compute_usage_correctness,
@@ -82,26 +81,6 @@ def evaluate_retention(model: TransformerWithKV, retention_loader, device: torch
     return correct / max(total, 1)
 
 
-def _apply_swarm_flop_budget(config: Dict[str, object], flops_per_step: float) -> Dict[str, object]:
-    config = dict(config)
-    max_total_steps = max(1, int(config["flops_target"] / max(flops_per_step, 1e-6)))
-    steps_per_meta = max(1, config["num_managers"] * config["agents_per_manager"] * config["agent_steps"])
-    allowed_meta = max(1, min(config["meta_iterations"], max_total_steps // steps_per_meta))
-    config["meta_iterations"] = allowed_meta
-    steps_per_meta = max(1, config["num_managers"] * config["agents_per_manager"] * config["agent_steps"])
-    total_steps = config["meta_iterations"] * steps_per_meta
-    if total_steps > max_total_steps:
-        adjusted_agent_steps = max(
-            1,
-            max_total_steps // (config["num_managers"] * config["agents_per_manager"] * config["meta_iterations"]),
-        )
-        config["agent_steps"] = adjusted_agent_steps
-        steps_per_meta = max(1, config["num_managers"] * config["agents_per_manager"] * config["agent_steps"])
-        total_steps = config["meta_iterations"] * steps_per_meta
-    config["swarm_flop_budget"] = float(total_steps) * float(flops_per_step)
-    return config
-
-
 def train_hsokv(
     dataset,
     tokenizer,
@@ -131,12 +110,9 @@ def train_hsokv(
     flops_per_step = max(estimate_model_flops(probe_model, base_config), 1e-6)
     del probe_model
 
-    if base_config.get("use_swarm", True):
-        config = _apply_swarm_flop_budget(base_config, flops_per_step)
-    else:
-        config = dict(base_config)
-        config["_max_training_steps"] = max(1, int(config["flops_target"] / flops_per_step))
-        config["swarm_flop_budget"] = float(config["_max_training_steps"]) * float(flops_per_step)
+    # Simplified training: no swarm optimization (proven to hurt performance)
+    config = dict(base_config)
+    config["_max_training_steps"] = max(1, int(config["flops_target"] / flops_per_step))
 
     def model_factory():
         model_config = dict(config)
@@ -155,201 +131,89 @@ def train_hsokv(
         if word_counts.get(name, 0) == 1
     }
 
-    if not config.get("use_swarm", True):
-        model = model_factory()
-        optimizer = torch.optim.Adam(model.parameters(), lr=config["baseline_lr"])
-        criterion = nn.CrossEntropyLoss()
-        loss_curve = []
-        steps_budget = config["_max_training_steps"]
-        steps_taken = 0
-        loop_start = time.time()
-        samples_processed = 0
-        for _ in range(config["meta_iterations"]):
-            for batch in dataloaders["train_loader"]:
-                if steps_taken >= steps_budget:
-                    break
-                batch = move_batch_to_device(batch, device)
-                model.train()
-                logits, info = model(batch["input_ids"], batch["attention_mask"], top_k=5)
-                loss = criterion(logits, batch["labels"])
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                loss_curve.append(loss.item())
-                steps_taken += 1
-                batch_size = batch["input_ids"].size(0)
-                samples_processed += batch_size
-                if steps_taken % 10 == 0 or steps_taken == steps_budget:
-                    elapsed = max(time.time() - loop_start, 1e-8)
-                    kv_hit_val = float(info["kv_details"]["avg_similarity"]) if config.get("use_kv", True) else 0.0
-                    samples_per_sec = samples_processed / elapsed
-                    print(
-                        f"[Step {steps_taken}/{steps_budget}] Loss: {loss.item():.3f} | "
-                        f"KV Hit: {kv_hit_val:.2f} | Samples/sec: {samples_per_sec:.1f}"
-                    )
-                if config.get("use_kv", True):
-                    with torch.no_grad():
-                        for pooled, definition, usage, rare_word in zip(info["pooled"], batch["definitions"], batch["usages"], batch["rare_words"]):
-                            if not rare_word:
-                                continue
-                            story_hash = hash((rare_word, definition, usage))
-                            if any(meta["story_hash"] == story_hash for meta in model.kv_memory.metadata):
-                                continue
-                            value_vector = model.encode_text(definition + " " + usage, config["definition_max_length"])
-                            model.kv_memory.write(
-                                key_embedding=pooled,
-                                value_dict={
-                                    "word": rare_word,
-                                    "definition": definition,
-                                    "usage": usage,
-                                    "value_vector": value_vector,
-                                },
-                                metadata={"confidence": 0.25, "retrieval_count": 0, "success_rate": 0.0, "story_hash": story_hash},
-                            )
-            if len(model.kv_memory) > config["max_memory_entries"]:
-                model.kv_memory.prune(config["kv_confidence_threshold"])
+    # Simplified training loop (no swarm - baseline-3 beats swarm: 86% vs 60%)
+    model = model_factory()
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["baseline_lr"])
+    criterion = nn.CrossEntropyLoss()
+    loss_curve = []
+    steps_budget = config["_max_training_steps"]
+    steps_taken = 0
+    loop_start = time.time()
+    samples_processed = 0
+    for _ in range(config["meta_iterations"]):
+        for batch in dataloaders["train_loader"]:
             if steps_taken >= steps_budget:
                 break
-        history = [
-            {
-                "iteration": idx,
-                "avg_loss": loss_curve[idx] if idx < len(loss_curve) else loss_curve[-1],
-                "val_accuracy": 0.0,
-                "kv_hit_rate": 0.0,
-                "retention": 0.0,
-                "usage": 0.0,
-                "swarm_diversity": 0.0,
-                "gate_entropy": 0.0,
-                "regret": max(0.0, 1.0 - 0.0),
-            }
-            for idx in range(config["meta_iterations"])
-        ]
-        test_metrics = evaluate_model(model, dataloaders["test_loader"], device, top_k=5, one_shot_ids=one_shot_ids)
-        retention = evaluate_retention(model, dataloaders["retention_loader"], device)
-        model_state_cpu = _state_dict_to_cpu(model.state_dict())
-        kv_state = model.kv_memory.get_state()
-        summary = {
-            "history": history,
-            "history_stats": summarize_history(history),
-            "test_metrics": test_metrics,
-            "retention": retention,
-            "one_shot_ids": one_shot_ids,
-            "dataloaders": dataloaders,
-            "flops_estimate": flops_per_step * steps_taken,
-            "model_state": model_state_cpu,
-            "kv_state": kv_state,
-            "telemetry": dict(config.get("_telemetry", {})),
-        }
-        return model, summary
-
-    supervisor = Supervisor(
-        model_factory,
-        tokenizer,
-        config,
-        device,
-        base_state=initial_state,
-        kv_state=initial_kv_state,
-    )
-    logs: List[Dict[str, object]] = []
-    consolidation_history: List[Dict[str, float]] = []
-    total_iterations = config["meta_iterations"]
-    pbar = tqdm(range(total_iterations), desc="Meta-iterations")
-    iteration_times: List[float] = []
-    reported_cpu_memory = False
-    for iteration in pbar:
-        if iteration_times:
-            avg_time = sum(iteration_times) / len(iteration_times)
-        else:
-            approx_steps = config["agent_steps"] * max(1, config["agents_per_manager"] * config["num_managers"])
-            avg_time = max(5.0, approx_steps * 0.03)
-        remaining_iterations = max(0, total_iterations - iteration)
-        eta_minutes = max(0.0, remaining_iterations * avg_time / 60.0)
-        pbar.write(f"[Iteration {iteration + 1}/{total_iterations}] ETA: {eta_minutes:.0f} minutes")
-        iteration_start = time.time()
-        iteration_log = supervisor.run_meta_iteration(
-            {
-                "train_loader": dataloaders["train_loader"],
-                "val_loader": dataloaders["val_loader"],
-                "retention_loader": dataloaders["retention_loader"],
-                "one_shot_ids": one_shot_ids,
-                "evaluate_model": evaluate_model,
-                "evaluate_retention": evaluate_retention,
-                "compute_convergence_step": compute_convergence_step,
-            },
-            iteration,
-        )
-        iteration_duration = time.time() - iteration_start
-        iteration_times.append(iteration_duration)
-        if torch.cuda.is_available():
-            device_index = torch.cuda.current_device()
-            used_gb = torch.cuda.memory_allocated(device_index) / 1e9
-            total_gb = torch.cuda.get_device_properties(device_index).total_memory / 1e9
-            percent_used = (used_gb / total_gb * 100.0) if total_gb else 0.0
-            pbar.write(f"[GPU Memory] Used: {used_gb:.1f}GB / {total_gb:.1f}GB ({percent_used:.0f}%)")
-        elif not reported_cpu_memory:
-            pbar.write("[GPU Memory] GPU not available - running on CPU.")
-            reported_cpu_memory = True
-        logs.append(iteration_log)
-        best_metrics = iteration_log["best"]
-        pbar.set_postfix(
-            {
-                "loss": f"{np.mean(best_metrics['loss_curve']):.3f}",
-                "kv_hit": f"{best_metrics['kv_hit_rate']:.2f}",
-                "retention": f"{best_metrics['retention']:.2f}",
-            }
-        )
-        # DEBUG: Check consolidation flag value
-        print(f"[DEBUG] use_consolidation = {config.get('use_consolidation', True)}")
-        if config.get("use_consolidation", True) and (iteration + 1) % 5 == 0:
-            best_model = supervisor.get_best_model()
-            consolidator = ConsolidationModule(
-                best_model,
-                config,
-                tokenizer,
-                label_names=label_names,
-                device=device,
-            )
-            metrics = consolidator.consolidate()
-            consolidation_history.append(
-                {
-                    "iteration": iteration,
-                    "consolidated_count": metrics.consolidated_count,
-                    "memory_freed": metrics.memory_freed,
-                    "avg_loss": metrics.avg_loss,
-                }
-            )
-            telemetry = config.setdefault("_telemetry", {})
-            telemetry["consolidation_runs"] = telemetry.get("consolidation_runs", 0) + 1
-            telemetry["consolidated_entries"] = telemetry.get("consolidated_entries", 0) + metrics.consolidated_count
-            if metrics.consolidated_count > 0:
-                supervisor.update_states_from_model(best_model)
-                pbar.write(
-                    f"[Consolidation] Iteration {iteration + 1}: "
-                    f"consolidated={metrics.consolidated_count}, "
-                    f"avg_loss={metrics.avg_loss:.4f}"
+            batch = move_batch_to_device(batch, device)
+            model.train()
+            logits, info = model(batch["input_ids"], batch["attention_mask"], top_k=5)
+            loss = criterion(logits, batch["labels"])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            loss_curve.append(loss.item())
+            steps_taken += 1
+            batch_size = batch["input_ids"].size(0)
+            samples_processed += batch_size
+            if steps_taken % 10 == 0 or steps_taken == steps_budget:
+                elapsed = max(time.time() - loop_start, 1e-8)
+                kv_hit_val = float(info["kv_details"]["avg_similarity"]) if config.get("use_kv", True) else 0.0
+                samples_per_sec = samples_processed / elapsed
+                print(
+                    f"[Step {steps_taken}/{steps_budget}] Loss: {loss.item():.3f} | "
+                    f"KV Hit: {kv_hit_val:.2f} | Samples/sec: {samples_per_sec:.1f}"
                 )
-    model = supervisor.get_best_model()
+            if config.get("use_kv", True):
+                with torch.no_grad():
+                    for pooled, definition, usage, rare_word in zip(info["pooled"], batch["definitions"], batch["usages"], batch["rare_words"]):
+                        if not rare_word:
+                            continue
+                        story_hash = hash((rare_word, definition, usage))
+                        if any(meta["story_hash"] == story_hash for meta in model.kv_memory.metadata):
+                            continue
+                        value_vector = model.encode_text(definition + " " + usage, config["definition_max_length"])
+                        model.kv_memory.write(
+                            key_embedding=pooled,
+                            value_dict={
+                                "word": rare_word,
+                                "definition": definition,
+                                "usage": usage,
+                                "value_vector": value_vector,
+                            },
+                            metadata={"confidence": 0.25, "retrieval_count": 0, "success_rate": 0.0, "story_hash": story_hash},
+                        )
+        if len(model.kv_memory) > config["max_memory_entries"]:
+            model.kv_memory.prune(config["kv_confidence_threshold"])
+        if steps_taken >= steps_budget:
+            break
+
+    # Build history summary
+    history = [
+        {
+            "iteration": idx,
+            "avg_loss": loss_curve[idx] if idx < len(loss_curve) else loss_curve[-1],
+            "val_accuracy": 0.0,
+            "kv_hit_rate": 0.0,
+            "retention": 0.0,
+            "usage": 0.0,
+            "swarm_diversity": 0.0,
+            "gate_entropy": 0.0,
+            "regret": max(0.0, 1.0 - 0.0),
+        }
+        for idx in range(config["meta_iterations"])
+    ]
     test_metrics = evaluate_model(model, dataloaders["test_loader"], device, top_k=5, one_shot_ids=one_shot_ids)
     retention = evaluate_retention(model, dataloaders["retention_loader"], device)
-    actual_steps = (
-        config["meta_iterations"]
-        * config["num_managers"]
-        * config["agents_per_manager"]
-        * config["agent_steps"]
-    )
     model_state_cpu = _state_dict_to_cpu(model.state_dict())
     kv_state = model.kv_memory.get_state()
     summary = {
-        "logs": logs,
-        "history": supervisor.global_memory["history"],
-        "history_stats": summarize_history(supervisor.global_memory["history"]),
-        "strategy_counts": supervisor.global_memory["strategy_counts"],
-        "consolidation_history": consolidation_history,
+        "history": history,
+        "history_stats": summarize_history(history),
         "test_metrics": test_metrics,
         "retention": retention,
         "one_shot_ids": one_shot_ids,
         "dataloaders": dataloaders,
-        "flops_estimate": flops_per_step * actual_steps,
+        "flops_estimate": flops_per_step * steps_taken,
         "model_state": model_state_cpu,
         "kv_state": kv_state,
         "telemetry": dict(config.get("_telemetry", {})),
@@ -381,7 +245,7 @@ def train_baseline_standard(
 ) -> Dict[str, object]:
     config = dict(config)
     device = torch.device(config["device"])
-    flop_budget = config.get("baseline_flop_budget") or config.get("swarm_flop_budget") or config.get("flops_target", 1e9)
+    flop_budget = config.get("baseline_flop_budget") or config.get("flops_target", 1e9)
     if num_labels is None:
         if dataset and dataset.get("train"):
             max_label = max(sample["word_id"] for sample in dataset["train"])
@@ -451,7 +315,7 @@ def train_baseline_kv(
 ) -> Dict[str, object]:
     config = dict(config)
     device = torch.device(config["device"])
-    flop_budget = config.get("baseline_flop_budget") or config.get("swarm_flop_budget") or config.get("flops_target", 1e9)
+    flop_budget = config.get("baseline_flop_budget") or config.get("flops_target", 1e9)
     if num_labels is None:
         if dataset and dataset.get("train"):
             max_label = max(sample["word_id"] for sample in dataset["train"])

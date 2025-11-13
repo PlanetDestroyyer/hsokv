@@ -16,11 +16,9 @@ from .distributed import run_distributed_swarm
 from .memory import KeyValueMemory
 from .model import BaselineTransformer, TransformerWithKV
 from .metrics import estimate_model_flops, latex_table_from_metrics, summarize_history
-from .context_retrieval import ContextualRetrievalModule
 from .consolidation import ConsolidationModule
 from .forgetting import ForgettingModule
 from .visualization import plot_consolidation_timeline, plot_memory_statistics, generate_report as generate_visualization_report
-from .swarm import Agent, Manager, Supervisor, compute_swarm_diversity
 from .training import (
     compute_convergence_step,
     compute_usage_correctness,
@@ -45,7 +43,6 @@ __all__ = [
     "relevant_ablation_variants",
     "ConsolidationModule",
     "ForgettingModule",
-    "ContextualRetrievalModule",
     "plot_consolidation_timeline",
     "plot_memory_statistics",
     "generate_visualization_report",
@@ -64,10 +61,6 @@ __all__ = [
     "estimate_model_flops",
     "summarize_history",
     "latex_table_from_metrics",
-    "Agent",
-    "Manager",
-    "Supervisor",
-    "compute_swarm_diversity",
     "compute_convergence_step",
     "compute_usage_correctness",
     "evaluate_baseline_model",
