@@ -106,16 +106,7 @@ class ForgettingModule:
         if not utilities:
             return ForgettingReport(0, len(self.memory), [])
         threshold = self.utility_threshold
-        # FIXED: Add 50-step waiting period before deletion (give memories time to prove useful)
-        low_utility_indices = []
-        for idx, score in enumerate(utilities):
-            if score < threshold:
-                # Check how long ago this memory was created
-                created_at = float(self.memory.metadata[idx].get("created_at", 0.0))
-                age = current_step - created_at
-                # Only delete if utility is low AND memory has existed for 50+ steps
-                if age > 50:
-                    low_utility_indices.append(idx)
+        low_utility_indices = [idx for idx, score in enumerate(utilities) if score < threshold]
         interfering_indices = self.identify_interfering_memories()
         to_remove = sorted(set(low_utility_indices + interfering_indices))
         if not to_remove:

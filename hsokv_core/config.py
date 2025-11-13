@@ -36,7 +36,7 @@ CONFIG: Dict[str, object] = {
     "use_forgetting": True,  # Re-enabled: needed to prevent memory overflow
     "forgetting_interval": 10,
     "forgetting_similarity_threshold": 0.8,
-    "forgetting_utility_threshold": 0.05,  # FIXED: Lowered to 0.05 to delete less aggressively (preserve more memories)
+    "forgetting_utility_threshold": 0.10,  # FIXED: Lowered from 0.25 to preserve memories longer during extended training
     "results_dir": "results",
     "retention_distractor_factor": 5,
     "baseline_epochs": 6,
@@ -81,7 +81,7 @@ CONFIG: Dict[str, object] = {
     "preset": "demo",
     "lm_corpus_preset": "medium",
     "lm_min_samples": 50,
-    "use_context_retrieval": False,  # FIXED: Disabled - adds random noise to retrieval
+    "use_context_retrieval": True,
     "context_recency_decay": 0.95,
     "context_domain_boost": 1.5,
     "context_emotion_scale": 0.3,
