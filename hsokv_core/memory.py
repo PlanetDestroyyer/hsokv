@@ -84,10 +84,9 @@ class KeyValueMemory:
             single = True
         else:
             query = query_embedding
-        # FIXED: Don't normalize query - preserves signal strength (magnitude information)
-        query = query.to(self.device)
+        # Normalize query to match normalized keys (cosine similarity)
+        query = self._normalize(query.to(self.device))
         keys = self.keys
-        # Use raw dot product instead of cosine similarity
         similarities = torch.clamp(F.linear(query, keys), min=0.0)
         if context_modulator is not None:
             try:
