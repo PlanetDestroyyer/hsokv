@@ -140,7 +140,11 @@ def train_hsokv(
     steps_taken = 0
     loop_start = time.time()
     samples_processed = 0
-    for _ in range(config["meta_iterations"]):
+    epoch = 0
+
+    # Train until step budget is exhausted (not just meta_iterations epochs)
+    while steps_taken < steps_budget:
+        epoch += 1
         for batch in dataloaders["train_loader"]:
             if steps_taken >= steps_budget:
                 break
@@ -184,8 +188,6 @@ def train_hsokv(
                         )
         if len(model.kv_memory) > config["max_memory_entries"]:
             model.kv_memory.prune(config["kv_confidence_threshold"])
-        if steps_taken >= steps_budget:
-            break
 
     # Build history summary
     history = [
@@ -200,7 +202,7 @@ def train_hsokv(
             "gate_entropy": 0.0,
             "regret": max(0.0, 1.0 - 0.0),
         }
-        for idx in range(config["meta_iterations"])
+        for idx in range(min(epoch, len(loss_curve)))
     ]
     test_metrics = evaluate_model(model, dataloaders["test_loader"], device, top_k=5, one_shot_ids=one_shot_ids)
     retention = evaluate_retention(model, dataloaders["retention_loader"], device)
