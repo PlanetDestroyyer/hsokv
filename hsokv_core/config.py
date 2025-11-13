@@ -87,12 +87,7 @@ CONFIG: Dict[str, object] = {
     "context_emotion_scale": 0.3,
     "context_importance_scale": 0.5,
     "context_domains": ["general", "medical", "legal", "finance", "technology", "culinary"],
-    "use_surprise_writing": False,  # DISABLED: Surprise filtering was preventing one-shot words from being stored
-    "surprise_threshold": 0.3,  # FIXED: Lowered from 0.5 for better one-shot recall
-    "novelty_threshold": 0.7,
-    "surprise_min_confidence": 0.05,
-    "first_exposure_threshold": 0.15,  # NEW: Aggressive threshold for first-time words
-    "first_exposure_boost": 0.25,  # NEW: Initial confidence boost for novel words
+    "use_surprise_writing": False,  # REMOVED: Surprise-based writing module deleted (was preventing one-shot learning)
     # 3-STAGE MEMORY LIFECYCLE (Human-inspired learning: "overwhelming" example)
     "memory_learning_phase_duration": 5,  # STAGE 1: First 5 retrievals - pure recall, maximum protection
     "memory_reinforcement_phase_duration": 20,  # STAGE 2: Next 15 retrievals - boosted, high protection
