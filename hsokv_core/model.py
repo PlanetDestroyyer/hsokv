@@ -10,7 +10,6 @@ import torch.nn as nn
 
 from .config import CONFIG, override_config
 from .memory import KeyValueMemory
-from .context_retrieval import ContextualRetrievalModule
 
 
 class PositionalEncoding(nn.Module):
@@ -57,8 +56,6 @@ class TransformerWithKV(nn.Module):
         )
         self.classifier = nn.Linear(config["d_model"], num_labels)
         self.kv_memory = KeyValueMemory(config["d_model"], torch.device(self.device_name))
-        self.use_context_retrieval = bool(config.get("use_context_retrieval", True))
-        self._context_module: Optional[ContextualRetrievalModule] = None
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, top_k: int = 5) -> Tuple[torch.Tensor, Dict[str, object]]:
         # FIXED: Ensure float32 precision for hardware reproducibility
@@ -74,21 +71,12 @@ class TransformerWithKV(nn.Module):
             {"avg_hits": 0.0, "topk_indices": [], "avg_similarity": 0.0},
         )
         if self.config.get("use_kv", True):
-            context_signals = None
-            context_modulator = None
-            if self.use_context_retrieval:
-                if self._context_module is None:
-                    self._context_module = ContextualRetrievalModule(self.config)
-                current_step = self._context_module.next_step()
-                context_signals = self._context_module.extract_context_signals(
-                    hidden.detach(), pooled.detach(), current_step
-                )
-                context_modulator = self._context_module
+            # Simplified retrieval (no context modulation - removed noisy context signals)
             retrieved, kv_details = self.kv_memory.retrieve(
                 pooled.detach(),
                 top_k=top_k,
-                context_modulator=context_modulator,
-                context_signals=context_signals,
+                context_modulator=None,
+                context_signals=None,
             )
             if retrieved.dim() == 1:
                 retrieved = retrieved.unsqueeze(0)
