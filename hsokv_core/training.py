@@ -133,6 +133,14 @@ def train_hsokv(
 
     # Simplified training loop (no swarm - baseline-3 beats swarm: 86% vs 60%)
     model = model_factory()
+
+    # Multi-GPU support: Wrap model with DataParallel if enabled
+    use_multi_gpu = config.get("_multi_gpu", False)
+    if use_multi_gpu and torch.cuda.is_available() and torch.cuda.device_count() >= 2:
+        gpu_devices = config.get("_gpu_devices", [0, 1])
+        model = nn.DataParallel(model, device_ids=gpu_devices)
+        print(f"[Multi-GPU] Training with DataParallel on GPUs {gpu_devices}")
+
     optimizer = torch.optim.Adam(model.parameters(), lr=config["baseline_lr"])
     criterion = nn.CrossEntropyLoss()
     loss_curve = []
@@ -168,15 +176,17 @@ def train_hsokv(
                     f"KV Hit: {kv_hit_val:.2f} | Samples/sec: {samples_per_sec:.1f}"
                 )
             if config.get("use_kv", True):
+                # Access underlying model if wrapped with DataParallel
+                model_ref = model.module if isinstance(model, nn.DataParallel) else model
                 with torch.no_grad():
                     for pooled, definition, usage, rare_word in zip(info["pooled"], batch["definitions"], batch["usages"], batch["rare_words"]):
                         if not rare_word:
                             continue
                         story_hash = hash((rare_word, definition, usage))
-                        if any(meta["story_hash"] == story_hash for meta in model.kv_memory.metadata):
+                        if any(meta["story_hash"] == story_hash for meta in model_ref.kv_memory.metadata):
                             continue
-                        value_vector = model.encode_text(definition + " " + usage, config["definition_max_length"])
-                        model.kv_memory.write(
+                        value_vector = model_ref.encode_text(definition + " " + usage, config["definition_max_length"])
+                        model_ref.kv_memory.write(
                             key_embedding=pooled,
                             value_dict={
                                 "word": rare_word,
@@ -186,8 +196,10 @@ def train_hsokv(
                             },
                             metadata={"confidence": 0.25, "retrieval_count": 0, "success_rate": 0.0, "story_hash": story_hash},
                         )
-        if len(model.kv_memory) > config["max_memory_entries"]:
-            model.kv_memory.prune(config["kv_confidence_threshold"])
+        # Access underlying model if wrapped with DataParallel
+        model_ref = model.module if isinstance(model, nn.DataParallel) else model
+        if len(model_ref.kv_memory) > config["max_memory_entries"]:
+            model_ref.kv_memory.prune(config["kv_confidence_threshold"])
 
     # Build history summary
     history = [
@@ -204,10 +216,17 @@ def train_hsokv(
         }
         for idx in range(min(epoch, len(loss_curve)))
     ]
-    test_metrics = evaluate_model(model, dataloaders["test_loader"], device, top_k=5, one_shot_ids=one_shot_ids)
-    retention = evaluate_retention(model, dataloaders["retention_loader"], device)
-    model_state_cpu = _state_dict_to_cpu(model.state_dict())
-    kv_state = model.kv_memory.get_state()
+
+    # Access underlying model if wrapped with DataParallel for evaluation
+    model_for_eval = model.module if isinstance(model, nn.DataParallel) else model
+
+    test_metrics = evaluate_model(model_for_eval, dataloaders["test_loader"], device, top_k=5, one_shot_ids=one_shot_ids)
+    retention = evaluate_retention(model_for_eval, dataloaders["retention_loader"], device)
+
+    # Save state_dict from underlying model (unwrap DataParallel)
+    model_state_cpu = _state_dict_to_cpu(model_for_eval.state_dict())
+    kv_state = model_for_eval.kv_memory.get_state()
+
     summary = {
         "history": history,
         "history_stats": summarize_history(history),
@@ -220,7 +239,9 @@ def train_hsokv(
         "kv_state": kv_state,
         "telemetry": dict(config.get("_telemetry", {})),
     }
-    return model, summary
+
+    # Return unwrapped model (not DataParallel wrapper)
+    return model_for_eval, summary
 
 
 def evaluate_baseline_model(model: BaselineTransformer, data_loader, device: torch.device) -> Dict[str, float]:
