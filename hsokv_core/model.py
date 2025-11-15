@@ -86,7 +86,7 @@ class TransformerWithKV(nn.Module):
         fused = gate * retrieved + (1 - gate) * pooled
         logits = self.classifier(fused)
         info = {
-            "gate_values": gate.detach().cpu().view(-1),
+            "gate_values": gate.detach().view(-1),  # Keep on GPU for DataParallel compatibility
             "kv_details": kv_details,
             "pooled": pooled.detach(),
             "retrieved": retrieved.detach(),
