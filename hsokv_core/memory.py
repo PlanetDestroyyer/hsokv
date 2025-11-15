@@ -119,14 +119,25 @@ class KeyValueMemory:
             default = torch.zeros_like(query_embedding)
             details = {"avg_hits": 0.0, "topk_indices": [[] for _ in range(query_embedding.shape[0] if query_embedding.dim() > 1 else 1)], "avg_similarity": 0.0}
             return default, details
+
+        # Get query device for DataParallel compatibility
+        # Each GPU replica will process queries on its own device
+        query_device = query_embedding.device
+
         single = False
         if query_embedding.dim() == 1:
             query = query_embedding.unsqueeze(0)
             single = True
         else:
             query = query_embedding
-        query = self._normalize(query.to(self.device))
-        keys = self.keys
+
+        # Normalize query on its original device
+        query = self._normalize(query)
+
+        # Move keys to query device instead of moving query to keys device
+        # This allows DataParallel replicas on different GPUs to work independently
+        keys = self.keys.to(query_device)
+
         similarities = torch.clamp(F.linear(query, keys), min=0.0)
         if context_modulator is not None:
             try:
@@ -229,7 +240,8 @@ class KeyValueMemory:
             if not weights or sum(weights) == 0:
                 weights = [1.0]
                 vectors = [torch.zeros_like(keys[0])]
-            weight_tensor = torch.tensor(weights, dtype=torch.float32, device=self.device)
+            # Use query_device for DataParallel compatibility
+            weight_tensor = torch.tensor(weights, dtype=torch.float32, device=query_device)
             stacked_vectors = torch.stack(vectors)
             aggregated = (weight_tensor.unsqueeze(-1) * stacked_vectors).sum(dim=0) / (weight_tensor.sum() + 1e-8)
             outputs.append(aggregated)
