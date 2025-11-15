@@ -441,10 +441,23 @@ def run_experiment(args: argparse.Namespace) -> None:
                 f"[WARN] Insufficient GPU memory. Reduce --batch-size (estimate {estimated_gb:.1f}GB vs {total_memory_gb:.1f}GB available)."
             )
 
+    # Multi-GPU setup
+    use_multi_gpu = args.multi_gpu and torch.cuda.is_available() and torch.cuda.device_count() >= 2
+    if use_multi_gpu:
+        print(f"\n[Multi-GPU] Enabling DataParallel with {min(2, torch.cuda.device_count())} GPUs")
+        config["_multi_gpu"] = True
+        config["_gpu_devices"] = [0, 1]
+
     if args.load_pretrained:
         dataloaders = prepare_dataloaders(dataset, tokenizer, config)
         device = torch.device(config["device"])
         model = TransformerWithKV.from_pretrained(args.load_pretrained, tokenizer, map_location=device)
+
+        # Wrap with DataParallel if multi-GPU enabled
+        if use_multi_gpu:
+            model = torch.nn.DataParallel(model, device_ids=[0, 1])
+            print(f"[Multi-GPU] Model wrapped with DataParallel")
+
         one_shot_ids = {
             idx
             for idx, name in enumerate(label_names or [])
@@ -889,24 +902,37 @@ def parse_args() -> argparse.Namespace:
         default=CONFIG.get("lm_corpus_preset", "medium"),
         help="Auto-generate corpus of specified size if --lm-corpus not provided",
     )
+    parser.add_argument(
+        "--multi-gpu",
+        action="store_true",
+        help="Use 2 GPUs if available, otherwise fall back to 1 GPU",
+    )
     return parser.parse_args()
 
 
-def print_system_info():
+def print_system_info(multi_gpu=False):
     print("=" * 60)
     print("System Information:")
     print(f"PyTorch version: {torch.__version__}")
     print(f"CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
-        print(f"CUDA device: {torch.cuda.get_device_name(0)}")
-        print(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        gpu_count = torch.cuda.device_count()
+        print(f"GPUs detected: {gpu_count}")
+        for i in range(gpu_count):
+            print(f"  GPU {i}: {torch.cuda.get_device_name(i)} ({torch.cuda.get_device_properties(i).total_memory / 1e9:.2f} GB)")
+        if multi_gpu and gpu_count >= 2:
+            print(f"Multi-GPU mode: ENABLED (using 2 GPUs)")
+        elif multi_gpu and gpu_count < 2:
+            print(f"Multi-GPU mode: DISABLED (only {gpu_count} GPU available, falling back to single GPU)")
+        else:
+            print(f"Multi-GPU mode: DISABLED")
     print(f"Device being used: {CONFIG['device']}")
     print("=" * 60)
 
 
 def main() -> None:
-    print_system_info()
     args = parse_args()
+    print_system_info(multi_gpu=args.multi_gpu)
     if args.mode == "test":
         run_validation_tests()
         return
