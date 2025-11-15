@@ -173,7 +173,8 @@ class KeyValueMemory:
             # Return ONLY the best match, no averaging
             if best_stage == "LEARNING" and use_pure_recall:
                 best_meta = self.metadata[best_idx]
-                best_value = self.values[best_idx]["value_vector"]
+                # Move value vector to query device for DataParallel compatibility
+                best_value = self.values[best_idx]["value_vector"].to(query_device)
                 best_sim = float(sims[0].item())
 
                 # Update retrieval count
@@ -227,7 +228,8 @@ class KeyValueMemory:
 
                 weight = max(effective_confidence, 1e-4) * similarity
                 weights.append(weight)
-                vectors.append(self.values[entry_id]["value_vector"])
+                # Move value vector to query device for DataParallel compatibility
+                vectors.append(self.values[entry_id]["value_vector"].to(query_device))
 
                 # Update retrieval count
                 self.metadata[entry_id]["retrieval_count"] += 1
