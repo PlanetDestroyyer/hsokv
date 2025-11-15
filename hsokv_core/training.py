@@ -48,8 +48,10 @@ def evaluate_model(
             correct += (preds == batch["labels"]).sum().item()
             total += batch["labels"].size(0)
             usage_scores.append(compute_usage_correctness(preds, batch["labels"], info["gate_values"]))
-            # Convert tensor to float
-            similarities.append(float(info["kv_avg_similarity"].item()))
+            # Convert tensor to float (handle DataParallel gathering multiple values)
+            kv_sim_tensor = info["kv_avg_similarity"]
+            sim_val = float(kv_sim_tensor.mean().item()) if kv_sim_tensor.numel() > 1 else float(kv_sim_tensor.item())
+            similarities.append(sim_val)
             if one_shot_ids:
                 mask = torch.tensor([(wid.item() in one_shot_ids) for wid in batch["word_ids"]], dtype=torch.bool, device=device)
                 if mask.any():
@@ -179,8 +181,12 @@ def train_hsokv(
             samples_processed += batch_size
             if steps_taken % 10 == 0 or steps_taken == steps_budget:
                 elapsed = max(time.time() - loop_start, 1e-8)
-                # Convert tensor to float for display
-                kv_hit_val = float(info["kv_avg_similarity"].item()) if config.get("use_kv", True) else 0.0
+                # Convert tensor to float for display (handle DataParallel gathering multiple values)
+                if config.get("use_kv", True):
+                    kv_sim_tensor = info["kv_avg_similarity"]
+                    kv_hit_val = float(kv_sim_tensor.mean().item()) if kv_sim_tensor.numel() > 1 else float(kv_sim_tensor.item())
+                else:
+                    kv_hit_val = 0.0
                 samples_per_sec = samples_processed / elapsed
                 print(
                     f"[Step {steps_taken}/{steps_budget}] Loss: {loss.item():.3f} | "
@@ -389,8 +395,9 @@ def train_baseline_kv(
             if steps_taken % 10 == 0 or steps_taken == max_steps:
                 elapsed = max(time.time() - loop_start, 1e-8)
                 samples_per_sec = samples_processed / elapsed
-                # Convert tensor to float
-                kv_hit_val = float(info["kv_avg_similarity"].item())
+                # Convert tensor to float (handle DataParallel gathering multiple values)
+                kv_sim_tensor = info["kv_avg_similarity"]
+                kv_hit_val = float(kv_sim_tensor.mean().item()) if kv_sim_tensor.numel() > 1 else float(kv_sim_tensor.item())
                 print(
                     f"[Step {steps_taken}/{max_steps}] Loss: {loss.item():.3f} | KV Hit: {kv_hit_val:.2f} | "
                     f"Samples/sec: {samples_per_sec:.1f}"
