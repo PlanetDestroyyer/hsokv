@@ -85,9 +85,13 @@ class TransformerWithKV(nn.Module):
             gate = torch.zeros_like(gate)
         fused = gate * retrieved + (1 - gate) * pooled
         logits = self.classifier(fused)
+
+        # For DataParallel compatibility: convert all values to tensors (no floats/lists)
         info = {
-            "gate_values": gate.detach().view(-1),  # Keep on GPU for DataParallel compatibility
-            "kv_details": kv_details,
+            "gate_values": gate.detach().view(-1),
+            # Convert kv_details floats to tensors for DataParallel gather
+            "kv_avg_hits": torch.tensor(kv_details.get("avg_hits", 0.0), device=pooled.device, dtype=torch.float32),
+            "kv_avg_similarity": torch.tensor(kv_details.get("avg_similarity", 0.0), device=pooled.device, dtype=torch.float32),
             "pooled": pooled.detach(),
             "retrieved": retrieved.detach(),
         }

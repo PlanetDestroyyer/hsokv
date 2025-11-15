@@ -48,15 +48,25 @@ def evaluate_model(
             correct += (preds == batch["labels"]).sum().item()
             total += batch["labels"].size(0)
             usage_scores.append(compute_usage_correctness(preds, batch["labels"], info["gate_values"]))
-            similarities.append(info["kv_details"]["avg_similarity"])
+            # Convert tensor to float
+            similarities.append(float(info["kv_avg_similarity"].item()))
             if one_shot_ids:
                 mask = torch.tensor([(wid.item() in one_shot_ids) for wid in batch["word_ids"]], dtype=torch.bool, device=device)
                 if mask.any():
                     one_shot_total += int(mask.sum().item())
                     one_shot_correct += int((preds[mask] == batch["labels"][mask]).sum().item())
-            for indices, success in zip(info["kv_details"]["topk_indices"], (preds == batch["labels"]).cpu().tolist()):
-                for idx in indices:
-                    model.kv_memory.update_confidence(idx, float(success))
+
+            # Update confidence by directly calling memory.retrieve to get topk_indices
+            # (info dict no longer contains topk_indices for DataParallel compatibility)
+            if hasattr(model, 'kv_memory'):
+                hidden = model.transformer(model.pos_encoder(model.embedding(batch["input_ids"]).float()))
+                hidden = model.layer_norm(hidden)
+                mask_expand = batch["attention_mask"].unsqueeze(-1)
+                pooled = (hidden * mask_expand).sum(dim=1) / (mask_expand.sum(dim=1) + 1e-8)
+                _, kv_details = model.kv_memory.retrieve(pooled.detach(), top_k=top_k, context_modulator=None, context_signals=None)
+                for indices, success in zip(kv_details["topk_indices"], (preds == batch["labels"]).cpu().tolist()):
+                    for idx in indices:
+                        model.kv_memory.update_confidence(idx, float(success))
     accuracy = correct / max(total, 1)
     if one_shot_ids and one_shot_total > 0:
         one_shot_accuracy = one_shot_correct / one_shot_total
@@ -169,7 +179,8 @@ def train_hsokv(
             samples_processed += batch_size
             if steps_taken % 10 == 0 or steps_taken == steps_budget:
                 elapsed = max(time.time() - loop_start, 1e-8)
-                kv_hit_val = float(info["kv_details"]["avg_similarity"]) if config.get("use_kv", True) else 0.0
+                # Convert tensor to float for display
+                kv_hit_val = float(info["kv_avg_similarity"].item()) if config.get("use_kv", True) else 0.0
                 samples_per_sec = samples_processed / elapsed
                 print(
                     f"[Step {steps_taken}/{steps_budget}] Loss: {loss.item():.3f} | "
@@ -378,7 +389,8 @@ def train_baseline_kv(
             if steps_taken % 10 == 0 or steps_taken == max_steps:
                 elapsed = max(time.time() - loop_start, 1e-8)
                 samples_per_sec = samples_processed / elapsed
-                kv_hit_val = float(info["kv_details"]["avg_similarity"])
+                # Convert tensor to float
+                kv_hit_val = float(info["kv_avg_similarity"].item())
                 print(
                     f"[Step {steps_taken}/{max_steps}] Loss: {loss.item():.3f} | KV Hit: {kv_hit_val:.2f} | "
                     f"Samples/sec: {samples_per_sec:.1f}"
