@@ -535,9 +535,21 @@ def run_experiment(args: argparse.Namespace) -> None:
     # Skip baseline training if requested (saves 90% training time!)
     if args.skip_baselines:
         print("\n[SKIP BASELINES] Skipping baseline training as requested")
-        baseline_standard = {"accuracy": 0.0}
-        baseline_kv = {"accuracy": 0.0}
-        baseline_in_context = {"accuracy": 0.0}
+        baseline_standard = {
+            "test_metrics": {"accuracy": 0.0},
+            "retention": 0.0,
+            "accuracy_curve": [0.0],
+            "flops_estimate": 0.0,
+        }
+        baseline_kv = {
+            "test_metrics": {"accuracy": 0.0, "kv_hit_rate": 0.0},
+            "retention": 0.0,
+            "flops_estimate": 0.0,
+        }
+        baseline_in_context = {
+            "accuracy": 0.0,
+            "retention": 0.0,
+        }
     else:
         baseline_budget = hsokv_summary.get("flops_estimate", config.get("flops_target", 0.0))
         baseline_standard = train_baseline_standard(
