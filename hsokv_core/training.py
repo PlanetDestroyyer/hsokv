@@ -61,10 +61,9 @@ def evaluate_model(
             # Update confidence by directly calling memory.retrieve to get topk_indices
             # (info dict no longer contains topk_indices for DataParallel compatibility)
             if hasattr(model, 'kv_memory'):
-                hidden = model.transformer(model.pos_encoder(model.embedding(batch["input_ids"]).float()))
-                hidden = model.layer_norm(hidden)
-                mask_expand = batch["attention_mask"].unsqueeze(-1)
-                pooled = (hidden * mask_expand).sum(dim=1) / (mask_expand.sum(dim=1) + 1e-8)
+                # Use pooled embeddings from forward pass instead of recomputing
+                # This works for both custom Transformer and pre-trained models
+                pooled = info["pooled"]
                 _, kv_details = model.kv_memory.retrieve(pooled.detach(), top_k=top_k, context_modulator=None, context_signals=None)
                 for indices, success in zip(kv_details["topk_indices"], (preds == batch["labels"]).cpu().tolist()):
                     for idx in indices:
