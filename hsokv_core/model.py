@@ -169,14 +169,27 @@ class TransformerWithKV(nn.Module):
     def get_pretrained_config(self) -> Dict[str, object]:
         config = dict(self.config)
         config["num_labels"] = self.num_labels
-        config["vocab_size"] = int(self.embedding.num_embeddings)
+        # Handle both custom transformer and pre-trained models
+        if self.use_pretrained:
+            config["vocab_size"] = self.vocab_size  # Use stored vocab_size
+        else:
+            config["vocab_size"] = int(self.embedding.num_embeddings)
         return config
 
     def save_pretrained(self, save_directory: str) -> None:
         os.makedirs(save_directory, exist_ok=True)
         config_path = os.path.join(save_directory, "config.json")
+        saved_config = self.get_pretrained_config()
+        # Save whether this model uses a pre-trained encoder
+        saved_config["use_pretrained"] = self.use_pretrained
+        if self.use_pretrained:
+            # Save the pre-trained model name so we can reload it
+            saved_config["pretrained_model_name"] = self.config.get("pretrained_model_name")
         with open(config_path, "w", encoding="utf-8") as handle:
-            json.dump(self.get_pretrained_config(), handle, indent=2)
+            json.dump(saved_config, handle, indent=2)
+
+        # Save model state (trainable parameters: gate_network, classifier, layer_norm, kv_memory)
+        # For pre-trained models, this does NOT include the frozen pre-trained encoder
         torch.save(self.state_dict(), os.path.join(save_directory, "pytorch_model.bin"))
         torch.save(self.kv_memory.get_state(), os.path.join(save_directory, "kv_memory.pt"))
         tokenizer = getattr(self, "tokenizer", None)
@@ -203,7 +216,8 @@ class TransformerWithKV(nn.Module):
         combined_config["device"] = str(device)
         model = cls(vocab_size, num_labels, tokenizer, combined_config)
         state_dict = torch.load(os.path.join(load_directory, "pytorch_model.bin"), map_location=device)
-        model.load_state_dict(state_dict)
+        # Use strict=False to allow for partial loading (e.g., pre-trained encoder might be loaded separately)
+        model.load_state_dict(state_dict, strict=False)
         kv_path = os.path.join(load_directory, "kv_memory.pt")
         if os.path.exists(kv_path):
             kv_state = torch.load(kv_path, map_location=device)
