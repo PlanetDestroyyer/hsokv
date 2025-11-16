@@ -539,11 +539,13 @@ def run_experiment(args: argparse.Namespace) -> None:
             "test_metrics": {"accuracy": 0.0},
             "retention": 0.0,
             "accuracy_curve": [0.0],
+            "loss_curve": [0.0],
             "flops_estimate": 0.0,
         }
         baseline_kv = {
             "test_metrics": {"accuracy": 0.0, "kv_hit_rate": 0.0},
             "retention": 0.0,
+            "loss_curve": [0.0],
             "flops_estimate": 0.0,
         }
         baseline_in_context = {

@@ -60,14 +60,16 @@ def evaluate_model(
 
             # Update confidence by directly calling memory.retrieve to get topk_indices
             # (info dict no longer contains topk_indices for DataParallel compatibility)
-            if hasattr(model, 'kv_memory'):
+            # Access underlying model if wrapped with DataParallel
+            model_ref = model.module if isinstance(model, nn.DataParallel) else model
+            if hasattr(model_ref, 'kv_memory'):
                 # Use pooled embeddings from forward pass instead of recomputing
                 # This works for both custom Transformer and pre-trained models
                 pooled = info["pooled"]
-                _, kv_details = model.kv_memory.retrieve(pooled.detach(), top_k=top_k, context_modulator=None, context_signals=None)
+                _, kv_details = model_ref.kv_memory.retrieve(pooled.detach(), top_k=top_k, context_modulator=None, context_signals=None)
                 for indices, success in zip(kv_details["topk_indices"], (preds == batch["labels"]).cpu().tolist()):
                     for idx in indices:
-                        model.kv_memory.update_confidence(idx, float(success))
+                        model_ref.kv_memory.update_confidence(idx, float(success))
     accuracy = correct / max(total, 1)
     if one_shot_ids and one_shot_total > 0:
         one_shot_accuracy = one_shot_correct / one_shot_total
