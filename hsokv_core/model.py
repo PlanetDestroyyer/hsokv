@@ -11,6 +11,13 @@ import torch.nn as nn
 from .config import CONFIG, override_config
 from .memory import KeyValueMemory
 
+# Import transformers for pre-trained model support
+try:
+    from transformers import AutoModel
+    HAS_TRANSFORMERS = True
+except ImportError:
+    HAS_TRANSFORMERS = False
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000) -> None:
@@ -37,17 +44,48 @@ class TransformerWithKV(nn.Module):
         self.device_name = config["device"]
         self.num_labels = num_labels
         self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(vocab_size, config["d_model"])
-        self.pos_encoder = PositionalEncoding(config["d_model"], dropout=config["dropout"], max_len=config["max_seq_length"])
-        encoder_layers = nn.TransformerEncoderLayer(
-            d_model=config["d_model"],
-            nhead=config["nhead"],
-            dim_feedforward=config["dim_feedforward"],
-            dropout=config["dropout"],
-            activation="gelu",
-            batch_first=True,
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=config["num_layers"])
+
+        # Check if using pre-trained model (GPT-2, BERT, etc.)
+        pretrained_model_name = config.get("pretrained_model_name", None)
+        self.use_pretrained = pretrained_model_name is not None
+
+        if self.use_pretrained:
+            if not HAS_TRANSFORMERS:
+                raise ImportError("transformers library required for pre-trained models. Install with: pip install transformers")
+
+            print(f"[Pre-trained Model] Loading {pretrained_model_name}...")
+            self.pretrained_encoder = AutoModel.from_pretrained(pretrained_model_name)
+
+            # Get hidden size from pre-trained model
+            if hasattr(self.pretrained_encoder.config, 'hidden_size'):
+                hidden_dim = self.pretrained_encoder.config.hidden_size
+            elif hasattr(self.pretrained_encoder.config, 'n_embd'):  # GPT-2 uses n_embd
+                hidden_dim = self.pretrained_encoder.config.n_embd
+            else:
+                hidden_dim = config["d_model"]
+
+            config["d_model"] = hidden_dim  # Update config to match pre-trained model
+            print(f"[Pre-trained Model] Using hidden dimension: {hidden_dim}")
+
+            # No need for custom embedding/transformer
+            self.embedding = None
+            self.pos_encoder = None
+            self.transformer = None
+        else:
+            # Use custom Transformer (original behavior)
+            self.pretrained_encoder = None
+            self.embedding = nn.Embedding(vocab_size, config["d_model"])
+            self.pos_encoder = PositionalEncoding(config["d_model"], dropout=config["dropout"], max_len=config["max_seq_length"])
+            encoder_layers = nn.TransformerEncoderLayer(
+                d_model=config["d_model"],
+                nhead=config["nhead"],
+                dim_feedforward=config["dim_feedforward"],
+                dropout=config["dropout"],
+                activation="gelu",
+                batch_first=True,
+            )
+            self.transformer = nn.TransformerEncoder(encoder_layers, num_layers=config["num_layers"])
+
         self.layer_norm = nn.LayerNorm(config["d_model"])
         self.gate_network = nn.Sequential(
             nn.Linear(config["d_model"], config["d_model"]),
@@ -58,14 +96,25 @@ class TransformerWithKV(nn.Module):
         self.kv_memory = KeyValueMemory(config["d_model"], torch.device(self.device_name))
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, top_k: int = 5) -> Tuple[torch.Tensor, Dict[str, object]]:
-        # FIXED: Ensure float32 precision for hardware reproducibility
-        embeddings = self.embedding(input_ids) * math.sqrt(float(self.config["d_model"]))
-        embeddings = embeddings.float()  # Force float32
-        embeddings = self.pos_encoder(embeddings)
-        hidden = self.transformer(embeddings)
-        hidden = self.layer_norm(hidden)
-        mask = attention_mask.unsqueeze(-1)
-        pooled = (hidden * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
+        if self.use_pretrained:
+            # Use pre-trained model (GPT-2, BERT, etc.)
+            outputs = self.pretrained_encoder(input_ids=input_ids, attention_mask=attention_mask)
+            # Get last hidden states
+            hidden = outputs.last_hidden_state  # [batch, seq_len, hidden_dim]
+            hidden = self.layer_norm(hidden)
+            # Pool: mean of all tokens (weighted by attention mask)
+            mask = attention_mask.unsqueeze(-1)
+            pooled = (hidden * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
+        else:
+            # Use custom Transformer (original behavior)
+            # FIXED: Ensure float32 precision for hardware reproducibility
+            embeddings = self.embedding(input_ids) * math.sqrt(float(self.config["d_model"]))
+            embeddings = embeddings.float()  # Force float32
+            embeddings = self.pos_encoder(embeddings)
+            hidden = self.transformer(embeddings)
+            hidden = self.layer_norm(hidden)
+            mask = attention_mask.unsqueeze(-1)
+            pooled = (hidden * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
         retrieved, kv_details = (
             torch.zeros_like(pooled),
             {"avg_hits": 0.0, "topk_indices": [], "avg_similarity": 0.0},
@@ -99,11 +148,22 @@ class TransformerWithKV(nn.Module):
 
     def encode_text(self, text: str, max_length: int) -> torch.Tensor:
         ids = self.tokenizer.encode(text, max_length)
-        tensor_ids = torch.tensor(ids, dtype=torch.long, device=self.embedding.weight.device).unsqueeze(0)
+        if self.use_pretrained:
+            device = next(self.pretrained_encoder.parameters()).device
+        else:
+            device = self.embedding.weight.device
+        tensor_ids = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+        attention_mask = (tensor_ids != self.tokenizer.pad_token_id).float()
         with torch.no_grad():
-            embeddings = self.embedding(tensor_ids)
-            mask = (tensor_ids != self.tokenizer.pad_token_id).float().unsqueeze(-1)
-            pooled = (embeddings * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
+            if self.use_pretrained:
+                outputs = self.pretrained_encoder(input_ids=tensor_ids, attention_mask=attention_mask)
+                hidden = outputs.last_hidden_state
+                mask = attention_mask.unsqueeze(-1)
+                pooled = (hidden * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
+            else:
+                embeddings = self.embedding(tensor_ids)
+                mask = attention_mask.unsqueeze(-1)
+                pooled = (embeddings * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
         return pooled.squeeze(0)
 
     def get_pretrained_config(self) -> Dict[str, object]:

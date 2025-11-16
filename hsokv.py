@@ -374,6 +374,9 @@ def run_experiment(args: argparse.Namespace) -> None:
         overrides["glue_data_dir"] = args.glue_data_dir
     if args.cifar_data_dir:
         overrides["cifar_data_dir"] = args.cifar_data_dir
+    if args.pretrained_model:
+        overrides["pretrained_model_name"] = args.pretrained_model
+        print(f"\n[Pre-trained Model] Will use '{args.pretrained_model}' instead of training from scratch")
     config = override_config(base_config, overrides)
     if args.task == "language_model":
         config["max_seq_length"] = int(config.get("lm_seq_length", config.get("max_seq_length", 96)))
@@ -916,6 +919,16 @@ def parse_args() -> argparse.Namespace:
         "--multi-gpu",
         action="store_true",
         help="Use 2 GPUs if available, otherwise fall back to 1 GPU",
+    )
+    parser.add_argument(
+        "--pretrained-model",
+        type=str,
+        default=None,
+        help=(
+            "Use a pre-trained model from Hugging Face instead of training from scratch. "
+            "Examples: 'gpt2', 'distilgpt2', 'bert-base-uncased', 'distilbert-base-uncased', 'roberta-base'. "
+            "This dramatically reduces training time (30-60 min vs 12+ hours) and improves performance."
+        ),
     )
     return parser.parse_args()
 
