@@ -532,20 +532,27 @@ def run_experiment(args: argparse.Namespace) -> None:
             )
             dataloaders = hsokv_summary["dataloaders"]
 
-    baseline_budget = hsokv_summary.get("flops_estimate", config.get("flops_target", 0.0))
-    baseline_standard = train_baseline_standard(
-        dataset,
-        tokenizer,
-        override_config(config, {"baseline_flop_budget": baseline_budget}),
-        num_labels=num_labels,
-    )
-    baseline_kv = train_baseline_kv(
-        dataset,
-        tokenizer,
-        override_config(config, {"baseline_flop_budget": baseline_budget}),
-        num_labels=num_labels,
-    )
-    baseline_in_context = in_context_learning(dataset, tokenizer, config)
+    # Skip baseline training if requested (saves 90% training time!)
+    if args.skip_baselines:
+        print("\n[SKIP BASELINES] Skipping baseline training as requested")
+        baseline_standard = {"accuracy": 0.0}
+        baseline_kv = {"accuracy": 0.0}
+        baseline_in_context = {"accuracy": 0.0}
+    else:
+        baseline_budget = hsokv_summary.get("flops_estimate", config.get("flops_target", 0.0))
+        baseline_standard = train_baseline_standard(
+            dataset,
+            tokenizer,
+            override_config(config, {"baseline_flop_budget": baseline_budget}),
+            num_labels=num_labels,
+        )
+        baseline_kv = train_baseline_kv(
+            dataset,
+            tokenizer,
+            override_config(config, {"baseline_flop_budget": baseline_budget}),
+            num_labels=num_labels,
+        )
+        baseline_in_context = in_context_learning(dataset, tokenizer, config)
 
     # FLOP logging for transparency
     per_forward_flops = log_flops_estimate(model, config)
@@ -929,6 +936,11 @@ def parse_args() -> argparse.Namespace:
             "Examples: 'gpt2', 'distilgpt2', 'bert-base-uncased', 'distilbert-base-uncased', 'roberta-base'. "
             "This dramatically reduces training time (30-60 min vs 12+ hours) and improves performance."
         ),
+    )
+    parser.add_argument(
+        "--skip-baselines",
+        action="store_true",
+        help="Skip baseline training (standard, kv-budget, in-context). Only train the main HSOKV model. Saves 90%% training time!",
     )
     return parser.parse_args()
 
