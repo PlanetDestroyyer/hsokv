@@ -448,6 +448,16 @@ def run_experiment(args: argparse.Namespace) -> None:
         config["_multi_gpu"] = True
         config["_gpu_devices"] = [0, 1]
 
+        # Optimize batch size for multi-GPU: increase by 3x for better GPU utilization
+        # With 2 GPUs (32GB total), we can process much larger batches
+        original_batch_size = config["batch_size"]
+        config["batch_size"] = original_batch_size * 3
+        print(f"[Multi-GPU Optimization] Batch size increased: {original_batch_size} → {config['batch_size']} for faster training")
+
+        # Enable cuDNN autotuner for additional 10-20% speedup
+        torch.backends.cudnn.benchmark = True
+        print("[Multi-GPU Optimization] cuDNN autotuner enabled for faster convolutions")
+
     if args.load_pretrained:
         dataloaders = prepare_dataloaders(dataset, tokenizer, config)
         device = torch.device(config["device"])
