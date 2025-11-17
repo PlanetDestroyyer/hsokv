@@ -122,7 +122,9 @@ def train_hsokv(
 
     # Simplified training: no swarm optimization (proven to hurt performance)
     config = dict(base_config)
-    config["_max_training_steps"] = max(1, int(config["flops_target"] / flops_per_step))
+    # Only calculate from FLOPs if not explicitly set
+    if "_max_training_steps" not in config or config["_max_training_steps"] is None:
+        config["_max_training_steps"] = max(1, int(config["flops_target"] / flops_per_step))
 
     def model_factory():
         model_config = dict(config)
@@ -292,7 +294,11 @@ def train_baseline_standard(
     if initial_state:
         model.load_state_dict(initial_state)
     flops_per_step = max(estimate_model_flops(model, config), 1e-6)
-    max_steps = max(1, int(flop_budget / flops_per_step))
+    # Use explicit step limit if set, otherwise calculate from FLOP budget
+    if "_max_training_steps" in config and config["_max_training_steps"] is not None:
+        max_steps = config["_max_training_steps"]
+    else:
+        max_steps = max(1, int(flop_budget / flops_per_step))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["baseline_lr"])
     criterion = nn.CrossEntropyLoss()
@@ -364,7 +370,11 @@ def train_baseline_kv(
     if initial_kv_state:
         model.kv_memory.load_state(initial_kv_state)
     flops_per_step = max(estimate_model_flops(model, config), 1e-6)
-    max_steps = max(1, int(flop_budget / flops_per_step))
+    # Use explicit step limit if set, otherwise calculate from FLOP budget
+    if "_max_training_steps" in config and config["_max_training_steps"] is not None:
+        max_steps = config["_max_training_steps"]
+    else:
+        max_steps = max(1, int(flop_budget / flops_per_step))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["baseline_lr"])
     criterion = nn.CrossEntropyLoss()
