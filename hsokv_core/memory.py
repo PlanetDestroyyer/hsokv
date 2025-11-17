@@ -86,13 +86,14 @@ class KeyValueMemory:
         self.values.append(stored_value)
         default_created = float(metadata.get("created_at", len(self.metadata)))
         meta = {
-            "confidence": metadata.get("confidence", 0.2),
+            "confidence": metadata.get("confidence", 0.5),  # FIXED: Increased default from 0.2 to 0.5
             "retrieval_count": metadata.get("retrieval_count", 0),
             "success_rate": metadata.get("success_rate", 0.0),
             "story_hash": metadata.get("story_hash"),
             "created_at": default_created,
             "domain": metadata.get("domain", "general"),
             "emotion": float(metadata.get("emotion", 0.5)),
+            "is_first_exposure": metadata.get("is_first_exposure", False),  # FIXED: Add is_first_exposure support
         }
         self.metadata.append(meta)
         if len(self.values) > CONFIG.get("memory_cap", 1000):
@@ -149,7 +150,9 @@ class KeyValueMemory:
         min_sim = similarities.min().item()
         max_sim = similarities.max().item()
         mean_sim = similarities.mean().item()
-        # print(f"[KV] Sim range: min={min_sim:.4f}, max={max_sim:.4f}, mean={mean_sim:.4f}")
+        # FIXED: Enable debug logging to diagnose low hit rates
+        if len(self.metadata) > 0 and max_sim > 0.1:
+            LOGGER.debug(f"[KV] Memory size: {len(self.metadata)} | Sim range: min={min_sim:.4f}, max={max_sim:.4f}, mean={mean_sim:.4f}")
         k = min(top_k, keys.size(0))
         topk = similarities.topk(k, dim=-1)
         outputs = []
@@ -222,7 +225,8 @@ class KeyValueMemory:
                     effective_confidence = confidence
 
                 # Skip very low similarity matches
-                if similarity < 0.3:
+                # FIXED: Lowered from 0.3 to 0.15 to allow more memory retrieval
+                if similarity < 0.15:
                     continue
 
                 weight = max(effective_confidence, 1e-4) * similarity

@@ -207,7 +207,13 @@ def train_hsokv(
                                 "usage": usage,
                                 "value_vector": value_vector,
                             },
-                            metadata={"confidence": 0.25, "retrieval_count": 0, "success_rate": 0.0, "story_hash": story_hash},
+                            metadata={
+                                "confidence": 0.5,  # FIXED: Increased from 0.25 to 0.5 for better retrieval
+                                "retrieval_count": 0,
+                                "success_rate": 0.0,
+                                "story_hash": story_hash,
+                                "is_first_exposure": True,  # FIXED: Enable 3-stage lifecycle
+                            },
                         )
         # Access underlying model if wrapped with DataParallel
         model_ref = model.module if isinstance(model, nn.DataParallel) else model
@@ -418,7 +424,13 @@ def train_baseline_kv(
                     model.kv_memory.write(
                         pooled,
                         {"word": rare_word, "definition": definition, "usage": usage, "value_vector": value_vector},
-                        {"confidence": 0.2, "retrieval_count": 0, "success_rate": 0.0, "story_hash": story_hash},
+                        {
+                            "confidence": 0.5,  # FIXED: Increased from 0.2 to 0.5 for better retrieval
+                            "retrieval_count": 0,
+                            "success_rate": 0.0,
+                            "story_hash": story_hash,
+                            "is_first_exposure": True,  # FIXED: Enable 3-stage lifecycle
+                        },
                     )
         if len(model.kv_memory) > config["max_memory_entries"]:
             model.kv_memory.prune(config["kv_confidence_threshold"])
