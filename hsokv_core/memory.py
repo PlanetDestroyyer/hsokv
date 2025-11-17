@@ -86,13 +86,14 @@ class KeyValueMemory:
         self.values.append(stored_value)
         default_created = float(metadata.get("created_at", len(self.metadata)))
         meta = {
-            "confidence": metadata.get("confidence", 0.2),
+            "confidence": metadata.get("confidence", 0.5),  # FIXED: Increased default from 0.2 to 0.5
             "retrieval_count": metadata.get("retrieval_count", 0),
             "success_rate": metadata.get("success_rate", 0.0),
             "story_hash": metadata.get("story_hash"),
             "created_at": default_created,
             "domain": metadata.get("domain", "general"),
             "emotion": float(metadata.get("emotion", 0.5)),
+            "is_first_exposure": metadata.get("is_first_exposure", False),  # FIXED: Add is_first_exposure support
         }
         self.metadata.append(meta)
         if len(self.values) > CONFIG.get("memory_cap", 1000):
@@ -149,7 +150,9 @@ class KeyValueMemory:
         min_sim = similarities.min().item()
         max_sim = similarities.max().item()
         mean_sim = similarities.mean().item()
-        # print(f"[KV] Sim range: min={min_sim:.4f}, max={max_sim:.4f}, mean={mean_sim:.4f}")
+        # FIXED: Enable debug logging to diagnose low hit rates
+        if len(self.metadata) > 0 and max_sim > 0.1:
+            LOGGER.debug(f"[KV] Memory size: {len(self.metadata)} | Sim range: min={min_sim:.4f}, max={max_sim:.4f}, mean={mean_sim:.4f}")
         k = min(top_k, keys.size(0))
         topk = similarities.topk(k, dim=-1)
         outputs = []
@@ -222,7 +225,8 @@ class KeyValueMemory:
                     effective_confidence = confidence
 
                 # Skip very low similarity matches
-                if similarity < 0.3:
+                # FIXED: Lowered from 0.3 to 0.15 to allow more memory retrieval
+                if similarity < 0.15:
                     continue
 
                 weight = max(effective_confidence, 1e-4) * similarity
@@ -238,8 +242,13 @@ class KeyValueMemory:
                     self.metadata[entry_id]["is_first_exposure"] = False
                     LOGGER.info(f"Memory '{self.values[entry_id]['word']}' graduated to MATURE stage")
             if not weights or sum(weights) == 0:
-                weights = [1.0]
-                vectors = [torch.zeros_like(keys[0])]
+                # FIXED: Return query itself instead of zero vector
+                # This allows model to fall back to its own representation
+                outputs.append(query[i])
+                hit_counts.append(0)
+                sim_scores.append(0.0)
+                topk_indices.append([])
+                continue  # Skip weighted averaging
             # Use query_device for DataParallel compatibility
             weight_tensor = torch.tensor(weights, dtype=torch.float32, device=query_device)
             stacked_vectors = torch.stack(vectors)
@@ -266,17 +275,44 @@ class KeyValueMemory:
             return
         meta = self.metadata[entry_id]
         count = meta["retrieval_count"]
-        meta["success_rate"] = (meta["success_rate"] * count + success_signal) / (count + 1)
+        # FIXED: retrieval_count was already incremented in retrieve()
+        # Use count-1 for correct averaging
+        old_count = max(1, count - 1)  # Prevent division by zero
+        meta["success_rate"] = (meta["success_rate"] * old_count + success_signal) / count
         meta["confidence"] = float(np.clip(meta["confidence"] + 0.1 * (success_signal - 0.5), 0.05, 1.0))
 
     def prune(self, threshold: float) -> None:
+        """
+        Prune low-confidence memories with 3-stage lifecycle protection.
+
+        FIXED: Now protects LEARNING and REINFORCEMENT stage memories from pruning.
+        """
         if not self.metadata:
             return
-        confidences = torch.tensor([m["confidence"] for m in self.metadata], device=self.device, dtype=torch.float32)
-        mask = confidences >= threshold
-        if mask.all():
+
+        # Check protection settings
+        protect_learning = CONFIG.get("protect_during_learning", True)
+        protect_reinforcement = CONFIG.get("protect_during_reinforcement", True)
+
+        keep_mask = []
+        for idx, meta in enumerate(self.metadata):
+            confidence = meta["confidence"]
+            stage = self.get_memory_stage(idx)
+
+            # Protect LEARNING and REINFORCEMENT stages from pruning
+            if stage == "LEARNING" and protect_learning:
+                keep_mask.append(True)
+            elif stage == "REINFORCEMENT" and protect_reinforcement:
+                keep_mask.append(True)
+            else:
+                # MATURE stage: prune based on confidence threshold
+                keep_mask.append(confidence >= threshold)
+
+        keep_mask_tensor = torch.tensor(keep_mask, dtype=torch.bool, device=self.device)
+        if keep_mask_tensor.all():
             return
-        keep_indices = mask.nonzero(as_tuple=True)[0]
+
+        keep_indices = keep_mask_tensor.nonzero(as_tuple=True)[0]
         if len(keep_indices) == 0:
             self.keys = torch.empty(0, self.key_dim, device=self.device)
             self.values = []
