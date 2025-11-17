@@ -467,7 +467,7 @@ JARVIS:"""
 def demo():
     """Demo JARVIS assistant"""
     print("=" * 70)
-    print("🤖 JARVIS - AI Assistant with Dual Memory")
+    print("🤖 KV-1 - AI Assistant with Dual Memory")
     print("=" * 70)
     print()
 
@@ -508,7 +508,7 @@ def demo():
         response = jarvis.chat(user_input)
 
         # Display
-        print(f"🤖 JARVIS: {response}")
+        print(f"🤖 KV-1: {response}")
         print()
 
         # Show memory status

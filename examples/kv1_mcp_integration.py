@@ -413,7 +413,7 @@ async def demo():
     for user_input in test_inputs:
         print(f"User: {user_input}")
         response = await jarvis.chat(user_input)
-        print(f"🤖 JARVIS: {response}")
+        print(f"🤖 KV-1: {response}")
         print()
 
         # Show memory stats

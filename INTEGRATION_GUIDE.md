@@ -1,6 +1,6 @@
 # Building a Living AI Assistant for Your Custom OS
 
-This guide shows how to integrate HSOKV into your custom phone OS to create a **truly alive, immortal AI system** like JARVIS.
+This guide shows how to integrate HSOKV into your custom phone OS to create a **truly alive, immortal AI system** like KV-1.
 
 ## Architecture Overview
 
@@ -10,7 +10,7 @@ This guide shows how to integrate HSOKV into your custom phone OS to create a **
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │                    JARVIS (AI Core)                    │ │
+│  │                    KV-1 (AI Core)                    │ │
 │  ├────────────────────────────────────────────────────────┤ │
 │  │                                                          │ │
 │  │  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐ │ │
@@ -58,7 +58,7 @@ This guide shows how to integrate HSOKV into your custom phone OS to create a **
 
 ```bash
 # In your OS build system (e.g., Android AOSP, Custom Linux)
-cd /system/apps/jarvis
+cd /system/apps/kv1
 
 # Install HSOKV
 pip install -e /path/to/hsokv
@@ -107,7 +107,7 @@ from pathlib import Path
 
 class PersistentMemory:
     """
-    Persistent memory storage for JARVIS.
+    Persistent memory storage for KV-1.
 
     Survives:
     - App restarts
@@ -115,7 +115,7 @@ class PersistentMemory:
     - Updates
     """
 
-    def __init__(self, db_path: str = "/data/jarvis/memory.db"):
+    def __init__(self, db_path: str = "/data/kv1/memory.db"):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -226,33 +226,33 @@ class PersistentMemory:
 ### Auto-Save on Important Events
 
 ```python
-class JarvisOS:
+class KV-1OS:
     def __init__(self):
-        self.jarvis = JarvisWithMCP()
+        self.kv1 = KV-1WithMCP()
         self.persistent = PersistentMemory()
 
         # Load previous memories
-        self.persistent.load_memory(self.jarvis.memory)
+        self.persistent.load_memory(self.kv1.memory)
 
     def on_conversation(self, user_input: str):
         """Handle user conversation"""
-        response = await self.jarvis.chat(user_input)
+        response = await self.kv1.chat(user_input)
 
         # Auto-save after each conversation
-        self.persistent.save_memory(self.jarvis.memory)
+        self.persistent.save_memory(self.kv1.memory)
 
         return response
 
     def on_shutdown(self):
         """Save before shutdown"""
-        print("💾 Saving JARVIS memory before shutdown...")
-        self.persistent.save_memory(self.jarvis.memory)
+        print("💾 Saving KV-1 memory before shutdown...")
+        self.persistent.save_memory(self.kv1.memory)
 
     def on_periodic_save(self):
         """Background save every 5 minutes"""
         while True:
             time.sleep(300)
-            self.persistent.save_memory(self.jarvis.memory)
+            self.persistent.save_memory(self.kv1.memory)
 ```
 
 ## Step 3: Add Internet Access
@@ -426,14 +426,14 @@ class LLMClient:
 ### System Service (Android/Linux)
 
 ```python
-# File: /system/services/jarvis_service.py
+# File: /system/services/kv1_service.py
 
 import asyncio
 from android import AndroidJavaClass, PythonJavaClass
 
-class JarvisService(PythonJavaClass):
+class KV-1Service(PythonJavaClass):
     """
-    Android Service for JARVIS.
+    Android Service for KV-1.
 
     Runs in background, always listening.
     """
@@ -441,15 +441,15 @@ class JarvisService(PythonJavaClass):
 
     def __init__(self):
         super().__init__()
-        self.jarvis = None
+        self.kv1 = None
         self.loop = None
 
     def onCreate(self):
         """Called when service is created"""
-        print("🚀 JARVIS Service starting...")
+        print("🚀 KV-1 Service starting...")
 
-        # Initialize JARVIS
-        self.jarvis = JarvisWithMCP(device="cpu")
+        # Initialize KV-1
+        self.kv1 = KV-1WithMCP(device="cpu")
 
         # Start event loop
         self.loop = asyncio.new_event_loop()
@@ -472,7 +472,7 @@ class JarvisService(PythonJavaClass):
         """Consolidate memories periodically"""
         while True:
             await asyncio.sleep(300)  # 5 minutes
-            self.jarvis.memory.sleep()
+            self.kv1.memory.sleep()
 
     async def context_monitoring_service(self):
         """Monitor phone context"""
@@ -487,7 +487,7 @@ class JarvisService(PythonJavaClass):
                 'network': self.get_network_type()
             }
 
-            self.jarvis.user_context.update(context)
+            self.kv1.user_context.update(context)
 
     async def proactive_assistance_service(self):
         """Proactively offer help based on context"""
@@ -496,7 +496,7 @@ class JarvisService(PythonJavaClass):
 
             # Check if should proactively assist
             if self.should_assist():
-                suggestion = await self.jarvis.generate_suggestion()
+                suggestion = await self.kv1.generate_suggestion()
                 self.send_notification(suggestion)
 
     def onStartCommand(self, intent, flags, startId):
@@ -506,7 +506,7 @@ class JarvisService(PythonJavaClass):
     def onDestroy(self):
         """Called when service is stopped"""
         # Save memory before shutdown
-        self.jarvis.save_memory("/data/jarvis/memory.db")
+        self.kv1.save_memory("/data/kv1/memory.db")
 ```
 
 ### Voice Interface Integration
@@ -517,10 +517,10 @@ from gtts import gTTS
 import os
 
 class VoiceInterface:
-    """Voice input/output for JARVIS"""
+    """Voice input/output for KV-1"""
 
-    def __init__(self, jarvis: JarvisWithMCP):
-        self.jarvis = jarvis
+    def __init__(self, kv1: KV-1WithMCP):
+        self.kv1 = kv1
         self.recognizer = sr.Recognizer()
 
     async def listen(self) -> str:
@@ -542,15 +542,15 @@ class VoiceInterface:
     def speak(self, text: str):
         """Speak response"""
         tts = gTTS(text=text, lang='en')
-        tts.save("/tmp/jarvis_response.mp3")
+        tts.save("/tmp/kv1_response.mp3")
 
         # Play audio (platform-specific)
-        os.system("mpg123 /tmp/jarvis_response.mp3")  # Linux
+        os.system("mpg123 /tmp/kv1_response.mp3")  # Linux
         # or use Android MediaPlayer
 
     async def voice_loop(self):
         """Main voice interaction loop"""
-        self.speak("Hello, I'm JARVIS. How can I help?")
+        self.speak("Hello, I'm KV-1. How can I help?")
 
         while True:
             # Listen
@@ -564,7 +564,7 @@ class VoiceInterface:
                 break
 
             # Process
-            response = await self.jarvis.chat(user_input)
+            response = await self.kv1.chat(user_input)
 
             # Respond
             self.speak(response)
@@ -575,11 +575,11 @@ class VoiceInterface:
 ### Proactive Behavior
 
 ```python
-class ProactiveJarvis:
-    """JARVIS that proactively helps without being asked"""
+class ProactiveKV-1:
+    """KV-1 that proactively helps without being asked"""
 
-    def __init__(self, jarvis: JarvisWithMCP):
-        self.jarvis = jarvis
+    def __init__(self, kv1: KV-1WithMCP):
+        self.kv1 = kv1
 
     async def monitor_and_assist(self):
         """Monitor context and proactively assist"""
@@ -609,7 +609,7 @@ class ProactiveJarvis:
         location = get_current_location()
 
         # Learn patterns
-        pattern = self.jarvis.memory.recall(f"location pattern {location}")
+        pattern = self.kv1.memory.recall(f"location pattern {location}")
 
         if pattern:
             # User usually does something at this location
@@ -623,7 +623,7 @@ class ProactiveJarvis:
 
         # Check learned patterns
         pattern_key = f"pattern {day} {hour}:00"
-        pattern = self.jarvis.memory.recall(pattern_key)
+        pattern = self.kv1.memory.recall(pattern_key)
 
         if pattern:
             # Suggest based on learned pattern
@@ -632,21 +632,21 @@ class ProactiveJarvis:
     def notify(self, message: str):
         """Send notification to user"""
         # Use OS notification system
-        send_notification(title="JARVIS", body=message)
+        send_notification(title="KV-1", body=message)
 ```
 
 ## Step 7: Complete Example for Your OS
 
 ```python
-# File: /system/apps/jarvis/main.py
+# File: /system/apps/kv1/main.py
 
 import asyncio
-from jarvis_assistant import JarvisAssistant
-from jarvis_mcp_integration import JarvisWithMCP, OSIntegration
+from kv1_assistant import KV-1Assistant
+from kv1_mcp_integration import KV-1WithMCP, OSIntegration
 
-class JarvisOS:
+class KV-1OS:
     """
-    Complete JARVIS integration for your custom OS.
+    Complete KV-1 integration for your custom OS.
 
     Features:
     - Dual memory (short-term + long-term)
@@ -660,11 +660,11 @@ class JarvisOS:
 
     def __init__(self):
         # Initialize core
-        self.jarvis = JarvisWithMCP(device="cpu")  # or "cuda"
+        self.kv1 = KV-1WithMCP(device="cpu")  # or "cuda"
 
         # Persistence
         self.persistent = PersistentMemory()
-        self.persistent.load_memory(self.jarvis.memory)
+        self.persistent.load_memory(self.kv1.memory)
 
         # Internet
         self.internet = InternetTools(api_keys={
@@ -679,18 +679,18 @@ class JarvisOS:
         )
 
         # Voice
-        self.voice = VoiceInterface(self.jarvis)
+        self.voice = VoiceInterface(self.kv1)
 
         # Proactive
-        self.proactive = ProactiveJarvis(self.jarvis)
+        self.proactive = ProactiveKV-1(self.kv1)
 
     async def start(self):
-        """Start JARVIS"""
-        print("🚀 Starting JARVIS OS Integration...")
+        """Start KV-1"""
+        print("🚀 Starting KV-1 OS Integration...")
 
         # Start all services
         tasks = [
-            self.jarvis.start_background_services(),
+            self.kv1.start_background_services(),
             self.proactive.monitor_and_assist(),
             self.voice.voice_loop()
         ]
@@ -699,18 +699,18 @@ class JarvisOS:
 
     def shutdown(self):
         """Clean shutdown"""
-        print("💾 Shutting down JARVIS...")
-        self.persistent.save_memory(self.jarvis.memory)
-        print("✅ JARVIS shutdown complete")
+        print("💾 Shutting down KV-1...")
+        self.persistent.save_memory(self.kv1.memory)
+        print("✅ KV-1 shutdown complete")
 
 
 if __name__ == "__main__":
-    jarvis_os = JarvisOS()
+    kv1_os = KV-1OS()
 
     try:
-        asyncio.run(jarvis_os.start())
+        asyncio.run(kv1_os.start())
     except KeyboardInterrupt:
-        jarvis_os.shutdown()
+        kv1_os.shutdown()
 ```
 
 ## Testing Plan
@@ -722,23 +722,23 @@ if __name__ == "__main__":
 pip install -r requirements.txt
 
 # Run basic test
-python examples/jarvis_assistant.py
+python examples/kv1_assistant.py
 
 # Run MCP integration test
-python examples/jarvis_mcp_integration.py
+python examples/kv1_mcp_integration.py
 ```
 
 ### 2. Integration Testing (Your OS)
 
 ```bash
 # Deploy to test device
-adb push /path/to/hsokv /system/apps/jarvis/
+adb push /path/to/hsokv /system/apps/kv1/
 
 # Start service
-adb shell am startservice com.yourname.jarvis/.JarvisService
+adb shell am startservice com.yourname.kv1/.KV-1Service
 
 # Test via logcat
-adb logcat | grep JARVIS
+adb logcat | grep KV-1
 ```
 
 ### 3. Real-World Testing

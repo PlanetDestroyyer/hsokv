@@ -1,4 +1,4 @@
-# JARVIS AI Assistant - Quick Start
+# KV-1 AI Assistant - Quick Start
 
 You now have **everything** to build a living AI assistant for your custom phone OS!
 
@@ -10,9 +10,9 @@ You now have **everything** to build a living AI assistant for your custom phone
 - **Consolidation**: Rehearsal (3+ uses) → automatic long-term storage
 - **Immortal**: Persistent storage, never forgets
 
-### 🤖 Complete JARVIS Implementation
-- `examples/jarvis_assistant.py` - Full AI assistant
-- `examples/jarvis_mcp_integration.py` - MCP + internet + tools
+### 🤖 Complete KV-1 Implementation
+- `examples/kv1_assistant.py` - Full AI assistant
+- `examples/kv1_mcp_integration.py` - MCP + internet + tools
 - `INTEGRATION_GUIDE.md` - Complete OS integration guide
 
 ### ✨ Features
@@ -46,24 +46,24 @@ This shows:
 - Consolidates after 3+ uses
 - Semantic search works!
 
-### 2. JARVIS Demo (No API needed)
+### 2. KV-1 Demo (No API needed)
 
 ```bash
-python examples/jarvis_assistant.py
+python examples/kv1_assistant.py
 ```
 
-Interactive chat with JARVIS:
+Interactive chat with KV-1:
 ```
 You: my name is John
-🤖 JARVIS: I understand. I'm JARVIS with dual memory system. How can I help you?
+🤖 KV-1: I understand. I'm KV-1 with dual memory system. How can I help you?
    [STM: 1/7 | LTM: 1 | Mood: excited]
 
 You: what's my name?
-🤖 JARVIS: I understand. I'm JARVIS with dual memory system. How can I help you?
+🤖 KV-1: I understand. I'm KV-1 with dual memory system. How can I help you?
    [STM: 2/7 | LTM: 1 | Mood: content]
 
 You: status
-📊 JARVIS Status:
+📊 KV-1 Status:
    Memory: STM=2/7
    Long-term: 1 memories
    Emotion: content
@@ -75,10 +75,10 @@ Commands:
 - `sleep` - Consolidate memories
 - `quit` - Exit
 
-### 3. JARVIS with MCP (Advanced)
+### 3. KV-1 with MCP (Advanced)
 
 ```bash
-python examples/jarvis_mcp_integration.py
+python examples/kv1_mcp_integration.py
 ```
 
 This shows:
@@ -91,20 +91,20 @@ This shows:
 ### Option 1: OpenAI
 
 ```python
-from examples.jarvis_assistant import JarvisAssistant
+from examples.kv1_assistant import KV-1Assistant
 
-jarvis = JarvisAssistant(
+kv1 = KV-1Assistant(
     llm_api_key="sk-...",  # Your OpenAI API key
     llm_provider="openai"
 )
 
-response = jarvis.chat("What's the weather like?")
+response = kv1.chat("What's the weather like?")
 ```
 
 ### Option 2: Anthropic (Claude)
 
 ```python
-jarvis = JarvisAssistant(
+kv1 = KV-1Assistant(
     llm_api_key="sk-ant-...",  # Your Anthropic API key
     llm_provider="anthropic"
 )
@@ -116,8 +116,8 @@ jarvis = JarvisAssistant(
 # Start Ollama
 ollama serve
 
-# Run JARVIS
-jarvis = JarvisAssistant(llm_provider="local")
+# Run KV-1
+kv1 = KV-1Assistant(llm_provider="local")
 ```
 
 ## Integrate Into Your Custom OS
@@ -126,36 +126,36 @@ jarvis = JarvisAssistant(llm_provider="local")
 
 ```bash
 # In your OS build
-cd /system/apps/jarvis
+cd /system/apps/kv1
 pip install -e /path/to/hsokv
 ```
 
-### Step 2: Copy JARVIS Files
+### Step 2: Copy KV-1 Files
 
 ```bash
-cp examples/jarvis_mcp_integration.py /system/apps/jarvis/
+cp examples/kv1_mcp_integration.py /system/apps/kv1/
 cp INTEGRATION_GUIDE.md /system/docs/
 ```
 
 ### Step 3: Create System Service
 
 ```python
-# File: /system/services/jarvis_service.py
+# File: /system/services/kv1_service.py
 
-from jarvis_mcp_integration import JarvisWithMCP, OSIntegration
+from kv1_mcp_integration import KV-1WithMCP, OSIntegration
 
-class JarvisService:
+class KV-1Service:
     def __init__(self):
-        self.jarvis = JarvisWithMCP(device="cpu")  # or "cuda"
+        self.kv1 = KV-1WithMCP(device="cpu")  # or "cuda"
 
     def on_boot(self):
-        """Start JARVIS when OS boots"""
-        print("🚀 JARVIS starting...")
-        self.jarvis.start()
+        """Start KV-1 when OS boots"""
+        print("🚀 KV-1 starting...")
+        self.kv1.start()
 
     def on_user_message(self, message: str):
         """Handle user input"""
-        response = await self.jarvis.chat(message)
+        response = await self.kv1.chat(message)
         return response
 ```
 
@@ -163,8 +163,8 @@ class JarvisService:
 
 ```bash
 # systemd (Linux)
-sudo systemctl enable jarvis
-sudo systemctl start jarvis
+sudo systemctl enable kv1
+sudo systemctl start kv1
 
 # Android
 # Add to init.rc or use app service
@@ -175,7 +175,7 @@ sudo systemctl start jarvis
 ```
 Your Phone
     ↓
-[JARVIS AI Assistant]
+[KV-1 AI Assistant]
     ├── Dual Memory System (HSOKV)
     │   ├── Short-term: Dict (7±2, 30s decay)
     │   └── Long-term: Vector DB (unlimited, RAG)
@@ -269,18 +269,18 @@ Recall "Mary" → Still works! ✓
 # Basic memory
 python examples/human_memory_demo.py
 
-# JARVIS demo
-python examples/jarvis_assistant.py
+# KV-1 demo
+python examples/kv1_assistant.py
 
 # MCP integration
-python examples/jarvis_mcp_integration.py
+python examples/kv1_mcp_integration.py
 ```
 
 ### 2. Connect LLM
 
-Edit `jarvis_assistant.py`:
+Edit `kv1_assistant.py`:
 ```python
-jarvis = JarvisAssistant(
+kv1 = KV-1Assistant(
     llm_api_key="YOUR_KEY",
     llm_provider="openai"  # or "anthropic"
 )
@@ -288,7 +288,7 @@ jarvis = JarvisAssistant(
 
 ### 3. Add Internet
 
-Edit `jarvis_mcp_integration.py`:
+Edit `kv1_mcp_integration.py`:
 ```python
 # Add your API keys
 api_keys = {
@@ -311,17 +311,17 @@ Follow `INTEGRATION_GUIDE.md` for:
 ### Persistent Storage
 
 ```python
-from jarvis_assistant import JarvisAssistant
+from kv1_assistant import KV-1Assistant
 
-jarvis = JarvisAssistant()
+kv1 = KV-1Assistant()
 
 # Save memories
-jarvis.save_memory("/data/jarvis/memory.pkl")
+kv1.save_memory("/data/kv1/memory.pkl")
 
 # Restart phone...
 
 # Load memories
-jarvis.load_memory("/data/jarvis/memory.pkl")
+kv1.load_memory("/data/kv1/memory.pkl")
 # All memories restored! ✓
 ```
 
@@ -329,10 +329,10 @@ jarvis.load_memory("/data/jarvis/memory.pkl")
 
 ```python
 # Sync to cloud
-jarvis.save_memory("s3://your-bucket/jarvis_memory.pkl")
+kv1.save_memory("s3://your-bucket/kv1_memory.pkl")
 
 # Restore on new device
-jarvis.load_memory("s3://your-bucket/jarvis_memory.pkl")
+kv1.load_memory("s3://your-bucket/kv1_memory.pkl")
 # Memories transferred! ✓
 ```
 
@@ -398,7 +398,7 @@ system.sleep()  # Call manually
 
 ## Success Criteria
 
-Your JARVIS is working when:
+Your KV-1 is working when:
 
 ✅ Remembers your name after 1 week
 ✅ Learns your routine (wake up time, gym schedule, etc.)
@@ -413,7 +413,7 @@ Your JARVIS is working when:
 
 You now have:
 - ✅ Complete dual memory system
-- ✅ Full JARVIS implementation
+- ✅ Full KV-1 implementation
 - ✅ MCP integration
 - ✅ OS integration guide
 - ✅ Testing examples
