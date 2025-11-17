@@ -192,9 +192,11 @@ def train_hsokv(
                 # Access underlying model if wrapped with DataParallel
                 model_ref = model.module if isinstance(model, nn.DataParallel) else model
                 with torch.no_grad():
+                    seen_in_batch = set()  # FIXED: Prevent duplicate writes within batch
                     for pooled, definition, usage, rare_word in zip(info["pooled"], batch["definitions"], batch["usages"], batch["rare_words"]):
-                        if not rare_word:
+                        if not rare_word or rare_word in seen_in_batch:  # FIXED: Check duplicates
                             continue
+                        seen_in_batch.add(rare_word)  # FIXED: Track seen words
                         story_hash = hash((rare_word, definition, usage))
                         if any(meta["story_hash"] == story_hash for meta in model_ref.kv_memory.metadata):
                             continue
@@ -215,7 +217,11 @@ def train_hsokv(
                                 "is_first_exposure": True,  # FIXED: Enable 3-stage lifecycle
                             },
                         )
-        # Access underlying model if wrapped with DataParallel
+                    # FIXED: Check memory overflow after EACH BATCH, not just epochs
+                    # Prevents OOM during long epochs
+                    if len(model_ref.kv_memory) > config["max_memory_entries"]:
+                        model_ref.kv_memory.prune(config["kv_confidence_threshold"])
+        # Keep epoch-level check as backup
         model_ref = model.module if isinstance(model, nn.DataParallel) else model
         if len(model_ref.kv_memory) > config["max_memory_entries"]:
             model_ref.kv_memory.prune(config["kv_confidence_threshold"])
@@ -432,6 +438,10 @@ def train_baseline_kv(
                             "is_first_exposure": True,  # FIXED: Enable 3-stage lifecycle
                         },
                     )
+                # FIXED: Check memory overflow after EACH BATCH
+                if len(model.kv_memory) > config["max_memory_entries"]:
+                    model.kv_memory.prune(config["kv_confidence_threshold"])
+        # Keep epoch-level check as backup
         if len(model.kv_memory) > config["max_memory_entries"]:
             model.kv_memory.prune(config["kv_confidence_threshold"])
         if steps_taken >= max_steps:
