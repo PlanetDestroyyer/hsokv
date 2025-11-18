@@ -164,14 +164,17 @@ class RealWorldBenchmark:
             # We'll use a simple approach: fine-tune embeddings for classification
             # This demonstrates catastrophic forgetting in real models
 
+            # Determine dtype based on device
+            model_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
             model = AutoModelForCausalLM.from_pretrained(
                 model_name,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                torch_dtype=model_dtype,
                 device_map=self.device,
             )
 
-            # Add classification head
-            classifier = nn.Linear(model.config.hidden_size, 2).to(self.device)
+            # Add classification head (match model dtype!)
+            classifier = nn.Linear(model.config.hidden_size, 2).to(self.device).to(model_dtype)
             optimizer = torch.optim.AdamW(
                 list(model.parameters()) + list(classifier.parameters()),
                 lr=2e-5
@@ -241,9 +244,9 @@ class RealWorldBenchmark:
                 hidden_state = outputs.hidden_states[-1][:, -1, :]  # Last token
                 logits = classifier(hidden_state)
 
-                # Loss
+                # Loss (cast logits to float32 for stable loss computation)
                 label = torch.tensor([example['label']]).to(self.device)
-                loss = nn.CrossEntropyLoss()(logits, label)
+                loss = nn.CrossEntropyLoss()(logits.float(), label)
 
                 # Backward pass
                 optimizer.zero_grad()
