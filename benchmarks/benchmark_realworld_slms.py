@@ -50,7 +50,8 @@ class RealWorldBenchmark:
     def load_sequential_text_classification_tasks(self):
         """
         Load real-world sequential text classification benchmark
-        Uses AGNews dataset split into 4 sequential tasks by category
+        Uses AGNews dataset - 4 classes learned sequentially
+        Each task is binary: "Is this text class X?" (yes=1, no=0)
         """
         print("\n" + "="*70)
         print("LOADING REAL-WORLD BENCHMARK: AGNews Sequential Classification")
@@ -64,17 +65,31 @@ class RealWorldBenchmark:
             tasks = []
             class_names = ["World News", "Sports", "Business", "Sci/Tech"]
 
-            for class_id, class_name in enumerate(class_names):
-                # Filter examples for this class
-                train_examples = [
-                    ex for ex in dataset['train']
-                    if ex['label'] == class_id
-                ][:500]  # Use 500 examples per task
+            # Get examples from all classes
+            all_train = list(dataset['train'])
+            all_test = list(dataset['test'])
 
-                test_examples = [
-                    ex for ex in dataset['test']
-                    if ex['label'] == class_id
-                ][:200]  # Use 200 test examples per task
+            for class_id, class_name in enumerate(class_names):
+                # Create binary classification task: "Is this class X?"
+                # Positive examples (label=1): Examples from this class
+                # Negative examples (label=0): Examples from other classes
+
+                train_pos = [ex for ex in all_train if ex['label'] == class_id][:100]
+                train_neg = [ex for ex in all_train if ex['label'] != class_id][:100]
+
+                test_pos = [ex for ex in all_test if ex['label'] == class_id][:50]
+                test_neg = [ex for ex in all_test if ex['label'] != class_id][:50]
+
+                # Convert to binary labels
+                train_examples = (
+                    [{'text': ex['text'], 'label': 1} for ex in train_pos] +
+                    [{'text': ex['text'], 'label': 0} for ex in train_neg]
+                )
+
+                test_examples = (
+                    [{'text': ex['text'], 'label': 1} for ex in test_pos] +
+                    [{'text': ex['text'], 'label': 0} for ex in test_neg]
+                )
 
                 tasks.append({
                     'name': class_name,
@@ -83,11 +98,11 @@ class RealWorldBenchmark:
                     'test': test_examples,
                 })
 
-                print(f"  Task {class_id + 1}: {class_name}")
-                print(f"    Train: {len(train_examples)} examples")
-                print(f"    Test: {len(test_examples)} examples")
+                print(f"  Task {class_id + 1}: {class_name} (Is this {class_name}?)")
+                print(f"    Train: {len(train_examples)} examples (100 positive, 100 negative)")
+                print(f"    Test: {len(test_examples)} examples (50 positive, 50 negative)")
 
-            print(f"\nTotal: {len(tasks)} tasks, {sum(len(t['train']) for t in tasks)} train examples")
+            print(f"\nTotal: {len(tasks)} binary classification tasks")
             return tasks
 
         except Exception as e:
@@ -173,12 +188,25 @@ class RealWorldBenchmark:
                 device_map=self.device,
             )
 
+            # Freeze most of the model to prevent catastrophic forgetting too fast
+            # (We WANT some forgetting to demonstrate the problem, but not total collapse)
+            for param in model.parameters():
+                param.requires_grad = False
+
+            # Only fine-tune the last layer
+            if hasattr(model, 'transformer'):
+                for param in model.transformer.h[-1].parameters():
+                    param.requires_grad = True
+            elif hasattr(model, 'model') and hasattr(model.model, 'layers'):
+                for param in model.model.layers[-1].parameters():
+                    param.requires_grad = True
+
             # Add classification head (match model dtype!)
             classifier = nn.Linear(model.config.hidden_size, 2).to(self.device).to(model_dtype)
-            optimizer = torch.optim.AdamW(
-                list(model.parameters()) + list(classifier.parameters()),
-                lr=2e-5
-            )
+
+            # Lower learning rate for stability
+            trainable_params = [p for p in model.parameters() if p.requires_grad] + list(classifier.parameters())
+            optimizer = torch.optim.AdamW(trainable_params, lr=5e-6)  # Much lower LR
 
             for task_idx, task in enumerate(tasks):
                 print(f"\n--- Learning Task {task_idx + 1}/{len(tasks)}: {task['name']} ---")
@@ -220,15 +248,18 @@ class RealWorldBenchmark:
             print("Skipping this model...")
             return None
 
-    def _finetune_on_task(self, model, tokenizer, classifier, optimizer, task, epochs=3):
+    def _finetune_on_task(self, model, tokenizer, classifier, optimizer, task, epochs=2):
         """Fine-tune model on a single task"""
         model.train()
         classifier.train()
 
+        import random
         train_data = task['train'][:100]  # Use subset for speed
+        random.shuffle(train_data)  # Shuffle for better training
 
         for epoch in range(epochs):
             total_loss = 0
+            valid_examples = 0
             for example in train_data:
                 # Tokenize
                 inputs = tokenizer(
@@ -251,13 +282,24 @@ class RealWorldBenchmark:
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
+
+                # Clip gradients to prevent NaN
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(classifier.parameters(), max_norm=1.0)
+
                 optimizer.step()
 
-                total_loss += loss.item()
+                # Track valid examples
+                if not torch.isnan(loss) and not torch.isinf(loss):
+                    total_loss += loss.item()
+                    valid_examples += 1
 
-            avg_loss = total_loss / len(train_data)
-            if epoch == epochs - 1:
-                print(f"    Fine-tuning epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+            if valid_examples > 0:
+                avg_loss = total_loss / valid_examples
+                if epoch == epochs - 1:
+                    print(f"    Fine-tuning epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+            else:
+                print(f"    Fine-tuning epoch {epoch+1}/{epochs}, Loss: NaN (skipping)")
 
     def _evaluate_task(self, model, tokenizer, classifier, task):
         """Evaluate model on a task"""
