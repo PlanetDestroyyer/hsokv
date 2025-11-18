@@ -4,6 +4,24 @@
 
 Like "Attention is All You Need" revolutionized transformers, HSOKV revolutionizes continual learning with memory.
 
+## 🧠 KV-1: The First Immortal Personal Intelligence (2025)
+
+**Built on HSOKV** - The flagship application demonstrating zero catastrophic forgetting in production.
+
+```bash
+# Run KV-1 OS
+python examples/kv1_os.py
+```
+
+**KV-1 Features:**
+- ✅ Never forgets (HSOKV-powered memory)
+- ✅ Proactive monitoring & interventions
+- ✅ Nightly self-improvement
+- ✅ True persistence across reboots
+- ✅ Speaks unprompted when needed
+
+See `examples/kv1_os.py` for the complete implementation.
+
 ## Core Innovation: Dual Memory System
 
 HSOKV implements **real human memory architecture**:
