@@ -20,10 +20,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    AutoModelForSequenceClassification,
-    TrainingArguments,
-    Trainer,
-    get_linear_schedule_with_warmup
 )
 from datasets import load_dataset
 import numpy as np
@@ -163,7 +159,7 @@ class RealWorldBenchmark:
         print(f"{'='*70}")
 
         try:
-            # Load tokenizer and model
+            # Load tokenizer and model as CAUSAL LM (for generation)
             print(f"\nLoading {model_name}...")
             tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -171,53 +167,28 @@ class RealWorldBenchmark:
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
 
-            # For classification, we'll use the model in a simple way
-            # We'll track accuracy on all previous tasks after each new task
+            # Load model for text generation (the official way)
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float32,  # Use float32 for stability
+            ).to(self.device)
 
             accuracy_matrix = np.zeros((len(tasks), len(tasks)))
 
-            # We'll use a simple approach: fine-tune embeddings for classification
-            # This demonstrates catastrophic forgetting in real models
-
-            # Determine dtype based on device
-            model_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=model_dtype,
-                device_map=self.device,
-            )
-
-            # Freeze most of the model to prevent catastrophic forgetting too fast
-            # (We WANT some forgetting to demonstrate the problem, but not total collapse)
-            for param in model.parameters():
-                param.requires_grad = False
-
-            # Only fine-tune the last layer
-            if hasattr(model, 'transformer'):
-                for param in model.transformer.h[-1].parameters():
-                    param.requires_grad = True
-            elif hasattr(model, 'model') and hasattr(model.model, 'layers'):
-                for param in model.model.layers[-1].parameters():
-                    param.requires_grad = True
-
-            # Add classification head (match model dtype!)
-            classifier = nn.Linear(model.config.hidden_size, 2).to(self.device).to(model_dtype)
-
-            # Lower learning rate for stability
-            trainable_params = [p for p in model.parameters() if p.requires_grad] + list(classifier.parameters())
-            optimizer = torch.optim.AdamW(trainable_params, lr=5e-6)  # Much lower LR
+            # Fine-tune the ENTIRE model (this WILL cause catastrophic forgetting)
+            # This is the realistic scenario - updating model weights on new tasks
+            optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
 
             for task_idx, task in enumerate(tasks):
                 print(f"\n--- Learning Task {task_idx + 1}/{len(tasks)}: {task['name']} ---")
 
                 # Fine-tune on current task
-                self._finetune_on_task(model, tokenizer, classifier, optimizer, task)
+                self._finetune_on_task(model, tokenizer, optimizer, task)
 
                 # Evaluate on all tasks seen so far
                 print(f"\n  Evaluating on all {task_idx + 1} tasks seen so far:")
                 for eval_idx in range(task_idx + 1):
-                    acc = self._evaluate_task(model, tokenizer, classifier, tasks[eval_idx])
+                    acc = self._evaluate_task(model, tokenizer, tasks[eval_idx])
                     accuracy_matrix[task_idx, eval_idx] = acc
                     print(f"    Task {eval_idx + 1} ({tasks[eval_idx]['name']}): {acc*100:.1f}%")
 
@@ -248,45 +219,58 @@ class RealWorldBenchmark:
             print("Skipping this model...")
             return None
 
-    def _finetune_on_task(self, model, tokenizer, classifier, optimizer, task, epochs=2):
-        """Fine-tune model on a single task"""
+    def _finetune_on_task(self, model, tokenizer, optimizer, task, epochs=2):
+        """
+        Fine-tune model on a task using generation-based classification.
+        Format: "Is this {category}? {text}\nAnswer: yes/no"
+        """
         model.train()
-        classifier.train()
 
         import random
-        train_data = task['train'][:100]  # Use subset for speed
-        random.shuffle(train_data)  # Shuffle for better training
+        train_data = task['train'][:50]  # Use smaller subset for speed
+        random.shuffle(train_data)
+
+        task_name = task['name']
 
         for epoch in range(epochs):
             total_loss = 0
             valid_examples = 0
+
             for example in train_data:
+                # Format as question-answer for LLM
+                question = f"Is this {task_name}? {example['text']}\nAnswer:"
+                answer = "yes" if example['label'] == 1 else "no"
+
+                # Create full text for training
+                full_text = question + " " + answer
+
                 # Tokenize
                 inputs = tokenizer(
-                    example['text'],
+                    full_text,
                     return_tensors='pt',
-                    padding=True,
                     truncation=True,
-                    max_length=128
+                    max_length=256
                 ).to(self.device)
 
-                # Forward pass
-                outputs = model(**inputs, output_hidden_states=True)
-                hidden_state = outputs.hidden_states[-1][:, -1, :]  # Last token
-                logits = classifier(hidden_state)
+                # Create labels (predict next token)
+                labels = inputs['input_ids'].clone()
 
-                # Loss (cast logits to float32 for stable loss computation)
-                label = torch.tensor([example['label']]).to(self.device)
-                loss = nn.CrossEntropyLoss()(logits.float(), label)
+                # Only compute loss on the answer part
+                # Find where "Answer:" ends
+                question_tokens = tokenizer(question, return_tensors='pt')['input_ids']
+                question_len = question_tokens.shape[1]
+
+                # Mask out question part (set to -100 to ignore in loss)
+                labels[:, :question_len] = -100
+
+                # Forward pass
+                outputs = model(**inputs, labels=labels)
+                loss = outputs.loss
 
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
-
-                # Clip gradients to prevent NaN
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                torch.nn.utils.clip_grad_norm_(classifier.parameters(), max_norm=1.0)
-
                 optimizer.step()
 
                 # Track valid examples
@@ -296,35 +280,48 @@ class RealWorldBenchmark:
 
             if valid_examples > 0:
                 avg_loss = total_loss / valid_examples
-                if epoch == epochs - 1:
-                    print(f"    Fine-tuning epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+                print(f"    Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
             else:
-                print(f"    Fine-tuning epoch {epoch+1}/{epochs}, Loss: NaN (skipping)")
+                print(f"    Epoch {epoch+1}/{epochs}, Loss: NaN (training failed)")
 
-    def _evaluate_task(self, model, tokenizer, classifier, task):
-        """Evaluate model on a task"""
+    def _evaluate_task(self, model, tokenizer, task):
+        """Evaluate model using generation"""
         model.eval()
-        classifier.eval()
 
         correct = 0
-        total = len(task['test'][:50])  # Use subset for speed
+        total = len(task['test'][:20])  # Use smaller subset for speed (generation is slow)
+
+        task_name = task['name']
 
         with torch.no_grad():
-            for example in task['test'][:50]:
+            for example in task['test'][:20]:
+                # Format as question
+                question = f"Is this {task_name}? {example['text']}\nAnswer:"
+
+                # Tokenize
                 inputs = tokenizer(
-                    example['text'],
+                    question,
                     return_tensors='pt',
-                    padding=True,
                     truncation=True,
-                    max_length=128
+                    max_length=200
                 ).to(self.device)
 
-                outputs = model(**inputs, output_hidden_states=True)
-                hidden_state = outputs.hidden_states[-1][:, -1, :]
-                logits = classifier(hidden_state)
+                # Generate answer
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=5,  # Only generate a few tokens
+                    do_sample=False,   # Deterministic
+                    pad_token_id=tokenizer.eos_token_id
+                )
 
-                pred = torch.argmax(logits, dim=1).item()
-                if pred == example['label']:
+                # Decode generated text
+                generated_text = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+                generated_text = generated_text.lower().strip()
+
+                # Check if prediction matches label
+                expected = "yes" if example['label'] == 1 else "no"
+
+                if generated_text.startswith(expected):
                     correct += 1
 
         return correct / total if total > 0 else 0.0
