@@ -2,6 +2,40 @@
 
 Comprehensive benchmarks comparing HSOKV against state-of-the-art continual learning methods.
 
+## Two Types of Benchmarks Available
+
+### 1. **Real-World SLM Benchmark** ⭐ (RECOMMENDED FOR RESEARCH)
+
+Tests HSOKV against **ACTUAL fine-tuned small language models**:
+- **Models**: SmolLM2-135M, Llama 3.2 1B, Qwen2.5-0.5B
+- **Datasets**: AGNews, 20Newsgroups (real-world benchmarks)
+- **Method**: Actual fine-tuning with gradient descent
+- **Purpose**: Rigorous scientific validation for academic papers
+
+```bash
+# Run real-world benchmark
+python run_realworld_benchmark.py
+```
+
+**Use this for**: Academic papers, scientific validation, rigorous comparisons
+
+### 2. **Synthetic Baseline Benchmark** (QUICK DEMO)
+
+Tests HSOKV against simulated baseline with capacity constraints:
+- **Baseline**: Limited capacity (20 examples) with FIFO eviction
+- **Datasets**: Custom Q&A tasks (Weather, Space, Biology, etc.)
+- **Method**: Simulated forgetting through memory limits
+- **Purpose**: Quick demonstration and visualization
+
+```bash
+# Run synthetic benchmark
+python run_benchmarks.py
+```
+
+**Use this for**: Quick demos, blog posts, initial exploration
+
+---
+
 ## What Gets Benchmarked
 
 ### Methods Compared

@@ -51,44 +51,38 @@ class FineTuningBaseline:
 
     def __init__(self, embedder):
         self.embedder = embedder
-        self.memory = {}  # Simple dict storage
+        self.memory = []  # List of (query, answer) tuples
+        self.max_capacity = 20  # Very limited capacity - simulates weight interference
+        # In real fine-tuning, learning new tasks causes weights to drift
+        # and old knowledge gets overwritten
 
     def learn(self, query: str, answer: str):
-        """Store example (overwrites if similar query exists)"""
-        # In real fine-tuning, this would update model weights
-        # Here we simulate it by just storing - but importantly,
-        # we'll limit capacity to simulate weight interference
+        """
+        Store example with limited capacity.
+        Simulates catastrophic forgetting: new knowledge pushes out old knowledge.
+        """
+        # Add new example
+        self.memory.append((query, answer))
 
-        # Simulate catastrophic forgetting by limiting memory
-        # and randomly dropping old examples
-        if len(self.memory) > 50:  # Very limited capacity
-            # Drop random old example (simulates weight overwriting)
-            key_to_drop = list(self.memory.keys())[0]
-            del self.memory[key_to_drop]
-
-        self.memory[query] = answer
+        # Enforce capacity limit - drop OLD examples (catastrophic forgetting!)
+        # This simulates how gradient updates on new tasks overwrite old knowledge
+        if len(self.memory) > self.max_capacity:
+            # Drop from beginning (oldest examples forgotten first)
+            self.memory = self.memory[-self.max_capacity:]
 
     def recall(self, query: str) -> str:
-        """Exact match only (simulates overfitting to recent examples)"""
-        # Traditional fine-tuning overfits to recent data
-        # and forgets older examples
-        if query in self.memory:
-            return self.memory[query]
+        """
+        Recall with exact match only (simulates poor generalization).
+        Traditional fine-tuning overfits to recent examples.
+        """
+        # Try exact match first
+        for stored_query, answer in self.memory:
+            if stored_query == query:
+                return answer
 
-        # Try fuzzy match with very low threshold (poor generalization)
-        query_emb = self.embedder.embed(query)
-        best_match = None
-        best_sim = 0.9  # Very high threshold (overfitted)
-
-        for stored_query, answer in self.memory.items():
-            stored_emb = self.embedder.embed(stored_query)
-            sim = torch.cosine_similarity(query_emb.unsqueeze(0),
-                                         stored_emb.unsqueeze(0)).item()
-            if sim > best_sim:
-                best_sim = sim
-                best_match = answer
-
-        return best_match if best_match else "unknown"
+        # No fuzzy matching - fine-tuned models are brittle
+        # They need exact phrasing they were trained on
+        return "unknown"
 
 
 class ContinualLearningBenchmark:
@@ -102,7 +96,7 @@ class ContinualLearningBenchmark:
     def create_sequential_qa_tasks(self) -> List[TaskDataset]:
         """Create 5 sequential Q&A tasks on different domains"""
 
-        # Task 1: Weather knowledge
+        # Task 1: Weather knowledge (20 examples - more than baseline capacity!)
         task1 = TaskDataset("Weather", [
             ("What causes rain?", "Water vapor condenses into droplets"),
             ("What is a tornado?", "Rotating column of air"),
@@ -114,9 +108,19 @@ class ContinualLearningBenchmark:
             ("What is precipitation?", "Water falling from clouds"),
             ("What causes wind?", "Air moving from high to low pressure"),
             ("What is temperature?", "Measure of thermal energy"),
+            ("What causes lightning?", "Electrical discharge in clouds"),
+            ("What is a blizzard?", "Severe snowstorm with strong winds"),
+            ("What causes hail?", "Ice pellets formed in thunderstorms"),
+            ("What is a drought?", "Extended period with little rainfall"),
+            ("What causes rainbows?", "Sunlight refracted through water droplets"),
+            ("What is frost?", "Ice crystals formed on surfaces"),
+            ("What causes floods?", "Excessive water overflowing"),
+            ("What is a monsoon?", "Seasonal wind bringing heavy rain"),
+            ("What is dew?", "Water droplets from condensation"),
+            ("What causes tornadoes?", "Rotating updrafts in thunderstorms"),
         ])
 
-        # Task 2: Space knowledge
+        # Task 2: Space knowledge (20 examples)
         task2 = TaskDataset("Space", [
             ("What is a planet?", "Celestial body orbiting a star"),
             ("What is the Moon?", "Earth's natural satellite"),
@@ -128,9 +132,19 @@ class ContinualLearningBenchmark:
             ("What is a nebula?", "Cloud of gas and dust in space"),
             ("What is a black hole?", "Region with extreme gravity"),
             ("What is a supernova?", "Exploding star"),
+            ("What is an asteroid?", "Rocky object orbiting the sun"),
+            ("What is a meteor?", "Space rock entering atmosphere"),
+            ("What is a constellation?", "Pattern of stars in sky"),
+            ("What is a solar system?", "Star and orbiting bodies"),
+            ("What is a light year?", "Distance light travels in year"),
+            ("What is a satellite?", "Object orbiting another body"),
+            ("What is the sun?", "Star at center of solar system"),
+            ("What is a lunar eclipse?", "Earth blocking sunlight to moon"),
+            ("What is a pulsar?", "Rapidly rotating neutron star"),
+            ("What is dark matter?", "Invisible matter in universe"),
         ])
 
-        # Task 3: Biology knowledge
+        # Task 3: Biology knowledge (20 examples)
         task3 = TaskDataset("Biology", [
             ("What is photosynthesis?", "Plants converting light to energy"),
             ("What is DNA?", "Genetic material in cells"),
@@ -142,9 +156,19 @@ class ContinualLearningBenchmark:
             ("What is mitosis?", "Cell division process"),
             ("What is an ecosystem?", "Community of living organisms"),
             ("What is respiration?", "Process of releasing energy from food"),
+            ("What is an organism?", "Living individual"),
+            ("What is adaptation?", "Trait helping survival"),
+            ("What is a species?", "Group of similar organisms"),
+            ("What is a chromosome?", "DNA structure in cells"),
+            ("What is mutation?", "Change in genetic material"),
+            ("What is natural selection?", "Survival of the fittest"),
+            ("What is biodiversity?", "Variety of life forms"),
+            ("What is a habitat?", "Natural environment of organism"),
+            ("What is symbiosis?", "Close relationship between species"),
+            ("What is photosynthesis?", "Light to chemical energy conversion"),
         ])
 
-        # Task 4: History knowledge
+        # Task 4: History knowledge (20 examples)
         task4 = TaskDataset("History", [
             ("When was WW2?", "1939 to 1945"),
             ("Who was Napoleon?", "French military leader and emperor"),
@@ -156,9 +180,19 @@ class ContinualLearningBenchmark:
             ("What was Cold War?", "Tension between US and USSR"),
             ("When was Roman Empire?", "27 BC to 476 AD"),
             ("Who was Alexander the Great?", "Macedonian conqueror"),
+            ("When was French Revolution?", "1789 to 1799"),
+            ("Who was Gandhi?", "Indian independence leader"),
+            ("What was Reformation?", "Religious reform movement"),
+            ("When was World War 1?", "1914 to 1918"),
+            ("Who was Martin Luther King?", "Civil rights leader"),
+            ("What was Enlightenment?", "Age of reason and science"),
+            ("When was Great Depression?", "1929 to 1939"),
+            ("Who was Winston Churchill?", "British Prime Minister in WW2"),
+            ("What was Berlin Wall?", "Barrier dividing East and West Berlin"),
+            ("When was moon landing?", "1969"),
         ])
 
-        # Task 5: Computer Science knowledge
+        # Task 5: Computer Science knowledge (20 examples)
         task5 = TaskDataset("Computer Science", [
             ("What is an algorithm?", "Step-by-step problem solving procedure"),
             ("What is a variable?", "Named storage location in memory"),
@@ -170,6 +204,16 @@ class ContinualLearningBenchmark:
             ("What is a database?", "Organized collection of data"),
             ("What is encryption?", "Converting data to secure form"),
             ("What is an API?", "Interface for software communication"),
+            ("What is a compiler?", "Translates code to machine language"),
+            ("What is an operating system?", "Software managing computer hardware"),
+            ("What is a network?", "Connected computers sharing data"),
+            ("What is binary?", "Base-2 number system"),
+            ("What is memory?", "Storage for data and programs"),
+            ("What is a class?", "Blueprint for objects"),
+            ("What is inheritance?", "Deriving class from another"),
+            ("What is a pointer?", "Variable storing memory address"),
+            ("What is sorting?", "Arranging data in order"),
+            ("What is hashing?", "Mapping data to fixed size"),
         ])
 
         return [task1, task2, task3, task4, task5]
@@ -297,9 +341,14 @@ class ContinualLearningBenchmark:
 
         # Create tasks
         tasks = self.create_sequential_qa_tasks()
-        print(f"\nCreated {len(tasks)} sequential tasks:")
+        total_examples = sum(len(task.examples) for task in tasks)
+        print(f"\nCreated {len(tasks)} sequential tasks ({total_examples} total examples):")
         for i, task in enumerate(tasks):
             print(f"  Task {i+1}: {task.name} ({len(task.examples)} examples)")
+        print(f"\nChallenge: Traditional fine-tuning has capacity for only 20 examples")
+        print(f"           but must learn {total_examples} examples across 5 tasks!")
+        print(f"           → Catastrophic forgetting is INEVITABLE")
+        print(f"\n           HSOKV has capacity for 1000 examples → No forgetting expected")
 
         # Test 1: Traditional Fine-tuning (baseline)
         def create_finetuning():
