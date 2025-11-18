@@ -193,10 +193,10 @@ class TestDualMemorySystem:
 
         # Check stats
         stats = self.system.get_stats()
-        print(f"  STM: {stats['stm_size']} items, LTM: {stats['ltm_learning']} learning, {stats['ltm_mature']} mature")
+        print(f"  STM: {stats['short_term']['size']} items, LTM: {stats['long_term']['learning']} learning, {stats['long_term']['mature']} mature")
 
         # Should be consolidated to LTM
-        assert stats['ltm_learning'] > 0 or stats['ltm_mature'] > 0, "Memory not consolidated to LTM"
+        assert stats['long_term']['learning'] > 0 or stats['long_term']['mature'] > 0, "Memory not consolidated to LTM"
         print("✓ Memory consolidated to LTM after rehearsal")
 
         return True
@@ -211,7 +211,7 @@ class TestDualMemorySystem:
             self.system.learn(word, f"definition of {word}")
 
         stats = self.system.get_stats()
-        stm_size = stats['stm_size']
+        stm_size = stats['short_term']['size']
 
         print(f"  STM size: {stm_size} (should be ≤ {self.system.stm.capacity})")
         assert stm_size <= self.system.stm.capacity, f"STM exceeded capacity: {stm_size} > {self.system.stm.capacity}"
@@ -233,7 +233,7 @@ class TestDualMemorySystem:
         # STM should still have it if within 30 seconds
         # (In real usage, this would decay after 30s of no access)
         stats_before = self.system.get_stats()
-        print(f"  STM size before decay: {stats_before['stm_size']}")
+        print(f"  STM size before decay: {stats_before['short_term']['size']}")
 
         print("✓ Decay mechanism functional")
         return True
@@ -247,7 +247,7 @@ class TestDualMemorySystem:
 
         # Should go directly to LTM
         stats = self.system.get_stats()
-        ltm_total = stats['ltm_learning'] + stats['ltm_reinforcement'] + stats['ltm_mature']
+        ltm_total = stats['long_term']['learning'] + stats['long_term']['reinforcement'] + stats['long_term']['mature']
 
         assert ltm_total > 0, "Emotionally significant memory not in LTM"
         print("✓ Emotionally significant memory went directly to LTM")
@@ -266,16 +266,16 @@ class TestDualMemorySystem:
                 self.system.recall(f"item{i}")
 
         stats_before = self.system.get_stats()
-        print(f"  Before sleep: STM={stats_before['stm_size']}, LTM={stats_before['ltm_learning']}")
+        print(f"  Before sleep: STM={stats_before['short_term']['size']}, LTM={stats_before['long_term']['learning']}")
 
         # Trigger sleep consolidation
         self.system.sleep()
 
         stats_after = self.system.get_stats()
-        print(f"  After sleep: STM={stats_after['stm_size']}, LTM={stats_after['ltm_learning']}")
+        print(f"  After sleep: STM={stats_after['short_term']['size']}, LTM={stats_after['long_term']['learning']}")
 
         # STM should be cleared, LTM should have more
-        assert stats_after['stm_size'] == 0, "STM not cleared after sleep"
+        assert stats_after['short_term']['size'] == 0, "STM not cleared after sleep"
         print("✓ Sleep consolidation successful")
 
         return True
