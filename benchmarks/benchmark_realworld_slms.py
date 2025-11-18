@@ -18,12 +18,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
     AutoModelForSequenceClassification,
-    TrainingArguments,
-    Trainer,
-    get_linear_schedule_with_warmup
+    AutoTokenizer,
+    AutoConfig,
 )
 from datasets import load_dataset
 import numpy as np
@@ -163,7 +160,7 @@ class RealWorldBenchmark:
         print(f"{'='*70}")
 
         try:
-            # Load tokenizer and model
+            # Load tokenizer and model FOR SEQUENCE CLASSIFICATION
             print(f"\nLoading {model_name}...")
             tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -171,53 +168,45 @@ class RealWorldBenchmark:
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
 
-            # For classification, we'll use the model in a simple way
-            # We'll track accuracy on all previous tasks after each new task
-
             accuracy_matrix = np.zeros((len(tasks), len(tasks)))
 
-            # We'll use a simple approach: fine-tune embeddings for classification
-            # This demonstrates catastrophic forgetting in real models
+            # Use proper sequence classification model (NOT causal LM!)
+            # This is the standard way to do text classification with transformers
+            config = AutoConfig.from_pretrained(model_name)
+            config.num_labels = 2  # Binary classification
+            config.problem_type = "single_label_classification"
 
-            # Determine dtype based on device
-            model_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
-            model = AutoModelForCausalLM.from_pretrained(
+            model = AutoModelForSequenceClassification.from_pretrained(
                 model_name,
-                torch_dtype=model_dtype,
-                device_map=self.device,
-            )
+                config=config,
+                ignore_mismatched_sizes=True,  # Allow adding classification head
+            ).to(self.device)
 
-            # Freeze most of the model to prevent catastrophic forgetting too fast
-            # (We WANT some forgetting to demonstrate the problem, but not total collapse)
-            for param in model.parameters():
-                param.requires_grad = False
+            # Use float32 for stability (float16 causes NaN with small models)
+            model = model.float()
 
-            # Only fine-tune the last layer
-            if hasattr(model, 'transformer'):
-                for param in model.transformer.h[-1].parameters():
+            # Freeze base model, only train classification head
+            # This prevents complete collapse but still shows some forgetting
+            for name, param in model.named_parameters():
+                if 'classifier' in name or 'score' in name:
                     param.requires_grad = True
-            elif hasattr(model, 'model') and hasattr(model.model, 'layers'):
-                for param in model.model.layers[-1].parameters():
-                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
 
-            # Add classification head (match model dtype!)
-            classifier = nn.Linear(model.config.hidden_size, 2).to(self.device).to(model_dtype)
-
-            # Lower learning rate for stability
-            trainable_params = [p for p in model.parameters() if p.requires_grad] + list(classifier.parameters())
-            optimizer = torch.optim.AdamW(trainable_params, lr=5e-6)  # Much lower LR
+            # Optimizer with lower LR for stability
+            trainable_params = [p for p in model.parameters() if p.requires_grad]
+            optimizer = torch.optim.AdamW(trainable_params, lr=1e-4)
 
             for task_idx, task in enumerate(tasks):
                 print(f"\n--- Learning Task {task_idx + 1}/{len(tasks)}: {task['name']} ---")
 
                 # Fine-tune on current task
-                self._finetune_on_task(model, tokenizer, classifier, optimizer, task)
+                self._finetune_on_task(model, tokenizer, optimizer, task)
 
                 # Evaluate on all tasks seen so far
                 print(f"\n  Evaluating on all {task_idx + 1} tasks seen so far:")
                 for eval_idx in range(task_idx + 1):
-                    acc = self._evaluate_task(model, tokenizer, classifier, tasks[eval_idx])
+                    acc = self._evaluate_task(model, tokenizer, tasks[eval_idx])
                     accuracy_matrix[task_idx, eval_idx] = acc
                     print(f"    Task {eval_idx + 1} ({tasks[eval_idx]['name']}): {acc*100:.1f}%")
 
@@ -248,10 +237,9 @@ class RealWorldBenchmark:
             print("Skipping this model...")
             return None
 
-    def _finetune_on_task(self, model, tokenizer, classifier, optimizer, task, epochs=2):
+    def _finetune_on_task(self, model, tokenizer, optimizer, task, epochs=3):
         """Fine-tune model on a single task"""
         model.train()
-        classifier.train()
 
         import random
         train_data = task['train'][:100]  # Use subset for speed
@@ -260,32 +248,30 @@ class RealWorldBenchmark:
         for epoch in range(epochs):
             total_loss = 0
             valid_examples = 0
+
             for example in train_data:
-                # Tokenize
+                # Tokenize text
                 inputs = tokenizer(
                     example['text'],
                     return_tensors='pt',
-                    padding=True,
+                    padding='max_length',
                     truncation=True,
                     max_length=128
                 ).to(self.device)
 
-                # Forward pass
-                outputs = model(**inputs, output_hidden_states=True)
-                hidden_state = outputs.hidden_states[-1][:, -1, :]  # Last token
-                logits = classifier(hidden_state)
+                # Labels
+                labels = torch.tensor([example['label']]).to(self.device)
 
-                # Loss (cast logits to float32 for stable loss computation)
-                label = torch.tensor([example['label']]).to(self.device)
-                loss = nn.CrossEntropyLoss()(logits.float(), label)
+                # Forward pass - model handles everything!
+                outputs = model(**inputs, labels=labels)
+                loss = outputs.loss
 
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
 
-                # Clip gradients to prevent NaN
+                # Clip gradients
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                torch.nn.utils.clip_grad_norm_(classifier.parameters(), max_norm=1.0)
 
                 optimizer.step()
 
@@ -296,34 +282,33 @@ class RealWorldBenchmark:
 
             if valid_examples > 0:
                 avg_loss = total_loss / valid_examples
-                if epoch == epochs - 1:
-                    print(f"    Fine-tuning epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+                print(f"    Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
             else:
-                print(f"    Fine-tuning epoch {epoch+1}/{epochs}, Loss: NaN (skipping)")
+                print(f"    Epoch {epoch+1}/{epochs}, Loss: NaN (training failed)")
 
-    def _evaluate_task(self, model, tokenizer, classifier, task):
+    def _evaluate_task(self, model, tokenizer, task):
         """Evaluate model on a task"""
         model.eval()
-        classifier.eval()
 
         correct = 0
         total = len(task['test'][:50])  # Use subset for speed
 
         with torch.no_grad():
             for example in task['test'][:50]:
+                # Tokenize
                 inputs = tokenizer(
                     example['text'],
                     return_tensors='pt',
-                    padding=True,
+                    padding='max_length',
                     truncation=True,
                     max_length=128
                 ).to(self.device)
 
-                outputs = model(**inputs, output_hidden_states=True)
-                hidden_state = outputs.hidden_states[-1][:, -1, :]
-                logits = classifier(hidden_state)
-
+                # Get predictions
+                outputs = model(**inputs)
+                logits = outputs.logits
                 pred = torch.argmax(logits, dim=1).item()
+
                 if pred == example['label']:
                     correct += 1
 
