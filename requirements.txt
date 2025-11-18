@@ -9,3 +9,7 @@ pytest>=7.0.0
 # Optional: For benchmarks and visualization
 matplotlib>=3.5.0
 seaborn>=0.12.0
+
+# Optional: For real-world SLM benchmarks
+datasets>=2.14.0
+accelerate>=0.20.0
