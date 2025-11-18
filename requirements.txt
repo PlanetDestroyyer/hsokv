@@ -5,3 +5,7 @@ transformers>=4.30.0
 
 # Optional: For running tests with pytest
 pytest>=7.0.0
+
+# Optional: For benchmarks and visualization
+matplotlib>=3.5.0
+seaborn>=0.12.0
